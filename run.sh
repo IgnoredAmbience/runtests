@@ -1,4 +1,5 @@
 #!/bin/bash
+# -*- indent-tabs-mode: t; -*-
 
 globalFileName=/tmp/JsCert_run_tests.tmp
 
@@ -76,4 +77,3 @@ case $ret in
 	printf ': \033[33mAbandon\033[00m\n'
 	exit 0 ;;
 esac
-
