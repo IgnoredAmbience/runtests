@@ -12,9 +12,9 @@ import os
 import getpass
 import calendar
 import sqlite3 as db
+import psycopg2
 import time
 import re
-
 
 # Our command-line interface
 argp = argparse.ArgumentParser(
@@ -69,6 +69,16 @@ argp.add_argument("--dbsave",action="store_true",
 argp.add_argument("--dbpath",action="store",metavar="path",
     default="test_data/test_results.db",
     help="Path to the database to save results in. The default should usually be fine. Please don't mess with this unless you know what you're doing.")
+
+# Condor infos
+argp.add_argument("--runid",action="store",metavar="runid",default=0,
+    help="Condor Test run ID, to cross reference condor processes and cluster")
+
+argp.add_argument("--procid",action="store",metavar="condorprocid",default=0,
+    help="Condor process ID for crossreference with Condor logs")
+
+argp.add_argument("--psqlconfig",action="store",metavar="psqlconfig",default="",
+    help="Use PostgreSQL backed database, give path to file containing libpq connection string (Indended for Condor use)")
 
 argp.add_argument("--verbose",action="store_true",
     help="Print the output of the tests as they happen.")
@@ -143,6 +153,8 @@ class DBManager:
     FAIL = "FAIL"
     ABORT = "ABORT"
 
+    INSERT_SINGLE_STMT = "insert into single_test_runs(test_id, batch_id, status, stdout, stderr) values (?,?,?,?,?)"
+
     con = None
     curdir = os.getcwd()
 
@@ -157,37 +169,43 @@ class DBManager:
     def makerelative(self,path):
         return re.sub("^"+self.curdir+"/","",path)
 
+    def create_batch(self,cur,results,version):
+        cur.execute("insert into test_batch_runs(time, implementation, impl_path, impl_version, title, notes, timestamp, system, osnodename, osrelease, osversion, hardware) values (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (results["timetaken"],
+                     results["implementation"],
+                     args.interp_path,
+                     version,
+                     results["testtitle"],
+                     results["testnote"],
+                     calendar.timegm(time.gmtime()),
+                     results["system"],
+                     results["osnodename"],
+                     results["osrelease"],
+                     results["osversion"],
+                     results["hardware"]))
+        cur.execute("SELECT id FROM test_batch_runs ORDER BY id DESC LIMIT 1")
+        batchid = cur.fetchone()[0]
+        return batchid
+
     def report_results(self,results):
         test_pipe = subprocess.Popen(["git","rev-parse","HEAD"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         githash,errors = test_pipe.communicate()
         version = re.sub(r'\n','',githash)
         if args.interp_version:
             version = args.interp_version
-        with self.con:
+        #with self.con:
+        try:
             cur = self.con.cursor()
-            cur.execute("insert into test_batch_runs(time, implementation, impl_path, impl_version, title, notes, timestamp, system, osnodename, osrelease, osversion, hardware) values (?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (results["timetaken"],
-                         results["implementation"],
-                         args.interp_path,
-                         version,
-                         results["testtitle"],
-                         results["testnote"],
-                         calendar.timegm(time.gmtime()),
-                         results["system"],
-                         results["osnodename"],
-                         results["osrelease"],
-                         results["osversion"],
-                         results["hardware"]))
-            cur.execute("SELECT id FROM test_batch_runs ORDER BY id DESC LIMIT 1")
-            batchid = cur.fetchone()[0]
-            insert_single_stmt = "insert into single_test_runs(test_id, batch_id, status, stdout, stderr) values (?,?,?,?,?)"
+            batchid = self.create_batch(cur, results, version)
+
             def insert_single(status,case):
-                cur.execute(insert_single_stmt,
+                cur.execute(self.INSERT_SINGLE_STMT,
                             (self.makerelative(case["filename"]),
                              batchid,
                              status,
                              case["stdout"],
                              case["stderr"]))
+
             for case in results["aborts"]:
                 # Insert abort cases
                 insert_single(self.ABORT,case)
@@ -198,6 +216,40 @@ class DBManager:
                 # Insert pass cases
                 insert_single(self.PASS,case)
             self.con.commit()
+        except Exception as e:
+            print "Error"
+            print e
+            exit(1)
+
+# When running concurrently as a distributed system, we cannot use sqlite over nfs due to locking issues
+# We additionally batch tests into an unbrella test run using the passed in runid
+class PGDBManager(DBManager):
+    def __init__(self):
+        with open(args.psqlconfig) as f:
+            psqlconfig = f.readline()
+
+        self.con = psycopg2.connect(psqlconfig)
+        self.INSERT_SINGLE_STMT = self.INSERT_SINGLE_STMT.replace("?","%s")
+
+    def create_batch(self,cur,results,version):
+        cur.execute("insert into test_batch_runs(time, implementation, impl_path, impl_version, title, notes, timestamp, system, osnodename, osrelease, osversion, hardware, run_id, condor_proc) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (results["timetaken"],
+                     results["implementation"],
+                     args.interp_path,
+                     version,
+                     results["testtitle"],
+                     results["testnote"],
+                     calendar.timegm(time.gmtime()),
+                     results["system"],
+                     results["osnodename"],
+                     results["osrelease"],
+                     results["osversion"],
+                     results["hardware"],
+                     args.runid,
+                     args.procid))
+        cur.execute("SELECT id FROM test_batch_runs ORDER BY id DESC LIMIT 1")
+        batchid = cur.fetchone()[0]
+        return batchid
 
 
 class ResultPrinter:
@@ -228,6 +280,9 @@ class ResultPrinter:
     def __init__(self):
         if(args.dbsave):
             self.dbmanager = DBManager()
+        elif(args.psqlconfig):
+            self.dbmanager = PGDBManager()
+            args.dbsave = True
 
     def print_heading(self,s):
         print self.HEADING+s+self.NORMAL
