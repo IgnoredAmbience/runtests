@@ -380,17 +380,6 @@ def main():
     argp.add_argument("filenames", metavar="path", nargs="+",
         help="The test file or directory we want to run. Directory names will recusively run all .js files.")
 
-    engines_grp = argp.add_mutually_exclusive_group()
-
-    engines_grp.add_argument("--spidermonkey", action="store_true",
-        help="Test SpiderMonkey instead of JSRef. If you use this, you should probably also use --interp_path")
-
-    engines_grp.add_argument("--lambdaS5", action="store_true",
-        help="Test LambdaS5 instead of JSRef. If you use this, you should probably also use --interp_path")
-
-    engines_grp.add_argument("--nodejs", action="store_true",
-        help="Test node.js instead of JSRef. If you use this, you should probably also use --interp_path")
-
     argp.add_argument("--interp_path", action="store", metavar="path", default=os.path.join("interp","run_js"),
         help="Where to find the interpreter.")
 
@@ -400,40 +389,35 @@ def main():
     argp.add_argument("--jsonparser", action="store_true",
         help="Use the JSON parser (Esprima) when running tests.")
 
-    argp.add_argument("--webreport",action="store_true",
+    engines_grp = argp.add_argument_group(title="Alternative JS Engine Selection")
+    engines_ex_grp = engines_grp.add_mutually_exclusive_group()
+    engines_ex_grp.add_argument("--spidermonkey", action="store_true",
+        help="Test SpiderMonkey instead of JSRef. If you use this, you should probably also use --interp_path")
+
+    engines_ex_grp.add_argument("--lambdaS5", action="store_true",
+        help="Test LambdaS5 instead of JSRef. If you use this, you should probably also use --interp_path")
+
+    engines_ex_grp.add_argument("--nodejs", action="store_true",
+        help="Test node.js instead of JSRef. If you use this, you should probably also use --interp_path")
+
+    report_grp = argp.add_argument_group(title="Report Options")
+    report_grp.add_argument("--webreport",action="store_true",
         help="Produce a web-page of your results in the default web directory. Requires pystache.")
 
-    argp.add_argument("--templatedir",action="store",metavar="path", default=os.path.join("test_reports"),
+    report_grp.add_argument("--templatedir",action="store",metavar="path", default=os.path.join("test_reports"),
         help="Where to find our web-templates when producing reports")
 
-    argp.add_argument("--reportdir",action="store",metavar="path",default=os.path.join("test_reports"),
+    report_grp.add_argument("--reportdir",action="store",metavar="path",default=os.path.join("test_reports"),
         help="Where to put our test reports")
 
-    argp.add_argument("--title",action="store",metavar="string", default="",
+    report_grp.add_argument("--title",action="store",metavar="string", default="",
         help="Optional title for this test. Will be used in the report filename, so no spaces please!")
 
-    argp.add_argument("--note",action="store",metavar="string", default="",
+    report_grp.add_argument("--note",action="store",metavar="string", default="",
         help="Optional explanatory note to be added to the test report.")
 
-    argp.add_argument("--noindex",action="store_true",
+    report_grp.add_argument("--noindex",action="store_true",
         help="Don't attempt to build an index.html for the reportdir")
-
-    argp.add_argument("--dbsave",action="store_true",
-        help="Save the results of this testrun to the database")
-
-    argp.add_argument("--dbpath",action="store",metavar="path",
-        default="test_data/test_results.db",
-        help="Path to the database to save results in. The default should usually be fine. Please don't mess with this unless you know what you're doing.")
-
-    # Condor infos
-    argp.add_argument("--runid",action="store",metavar="runid",default=0,
-        help="Condor Test run ID, to cross reference condor processes and cluster")
-
-    argp.add_argument("--procid",action="store",metavar="condorprocid",default=0,
-        help="Condor process ID for crossreference with Condor logs")
-
-    argp.add_argument("--psqlconfig",action="store",metavar="psqlconfig",default="",
-        help="Use PostgreSQL backed database, give path to file containing libpq connection string (Indended for Condor use)")
 
     argp.add_argument("--verbose",action="store_true",
         help="Print the output of the tests as they happen.")
@@ -443,6 +427,30 @@ def main():
 
     argp.add_argument("--no_parasite",action="store_true",
         help="Run the interpreter with -no-parasite flag (the options --debug and --verbose might be useless in this mode).")
+
+    db_args = argp.add_argument_group(title="Database options")
+
+    db_args.add_argument("--dbsave",action="store_true",
+        help="Save the results of this testrun to the database")
+
+    db_args.add_argument("--dbpath",action="store",metavar="path",
+        default="test_data/test_results.db",
+        help="Path to the database to save results in. The default should usually be fine. Please don't mess with this unless you know what you're doing.")
+
+    db_args.add_argument("--psqlconfig",action="store",metavar="psqlconfig",default="",
+        help="Use PostgreSQL backed database, give path to file containing libpq connection string")
+
+
+    # Condor infos
+    condor_args = argp.add_argument_group(title="Condor Options")
+    condor_args.add_argument("--condor", action="store_true",
+        help="Run these testcases on the Condor distributed computing cluster, requires --psqlconfig")
+
+    condor_args.add_argument("--runid",action="store",metavar="runid",default=0,
+        help="(Internal) Test run ID, to cross reference condor processes and cluster")
+
+    condor_args.add_argument("--procid",action="store",metavar="condorprocid",default=0,
+        help="(Internal) Process ID for crossreference with Condor logs")
 
     args = argp.parse_args()
 
