@@ -16,81 +16,6 @@ import psycopg2
 import time
 import re
 
-# Our command-line interface
-argp = argparse.ArgumentParser(
-    description="Run some Test262-style tests with some JS implementation: by default, with JSRef.")
-
-argp.add_argument("filenames", metavar="filename", nargs="*",
-                  help="The test file we want to run. If you don't specify, we'll recursively find all .js files under the current directory.")
-
-engines_grp = argp.add_mutually_exclusive_group()
-
-engines_grp.add_argument("--spidermonkey", action="store_true",
-    help="Test SpiderMonkey instead of JSRef. If you use this, you should probably also use --interp_path")
-
-engines_grp.add_argument("--lambdaS5", action="store_true",
-    help="Test LambdaS5 instead of JSRef. If you use this, you should probably also use --interp_path")
-
-engines_grp.add_argument("--nodejs", action="store_true",
-    help="Test node.js instead of JSRef. If you use this, you should probably also use --interp_path")
-
-argp.add_argument("--interp_path", action="store", metavar="path",
-                  default=os.path.join("interp","run_js"), help="Where to find the interpreter.")
-
-argp.add_argument("--interp_version", action="store", metavar="version", default="",
-    help="The version of the interpreter you're running. Default is the git hash of the current directory.")
-
-argp.add_argument("--jsonparser", action="store_true",
-                  help="Use the JSON parser (Esprima) when running tests.")
-
-argp.add_argument("--webreport",action="store_true",
-    help="Produce a web-page of your results in the default web directory. Requires pystache.")
-
-argp.add_argument("--templatedir",action="store",metavar="path",
-    default=os.path.join("test_reports"),
-    help="Where to find our web-templates when producing reports")
-
-argp.add_argument("--reportdir",action="store",metavar="path",
-    default=os.path.join("test_reports"),
-    help="Where to put our test reports")
-
-argp.add_argument("--title",action="store",metavar="string", default="",
-    help="Optional title for this test. Will be used in the report filename, so no spaces please!")
-
-argp.add_argument("--note",action="store",metavar="string", default="",
-    help="Optional explanatory note to be added to the test report.")
-
-argp.add_argument("--noindex",action="store_true",
-    help="Don't attempt to build an index.html for the reportdir")
-
-argp.add_argument("--dbsave",action="store_true",
-    help="Save the results of this testrun to the database")
-
-argp.add_argument("--dbpath",action="store",metavar="path",
-    default="test_data/test_results.db",
-    help="Path to the database to save results in. The default should usually be fine. Please don't mess with this unless you know what you're doing.")
-
-# Condor infos
-argp.add_argument("--runid",action="store",metavar="runid",default=0,
-    help="Condor Test run ID, to cross reference condor processes and cluster")
-
-argp.add_argument("--procid",action="store",metavar="condorprocid",default=0,
-    help="Condor process ID for crossreference with Condor logs")
-
-argp.add_argument("--psqlconfig",action="store",metavar="psqlconfig",default="",
-    help="Use PostgreSQL backed database, give path to file containing libpq connection string (Indended for Condor use)")
-
-argp.add_argument("--verbose",action="store_true",
-    help="Print the output of the tests as they happen.")
-
-argp.add_argument("--debug",action="store_true",
-    help="Run the interpreter with debugging flags (-print-heap -verbose -skip-init).")
-
-argp.add_argument("--no_parasite",action="store_true",
-    help="Run the interpreter with -no-parasite flag (the options --debug and --verbose might be useless in this mode).")
-
-args = argp.parse_args()
-
 # Some handy data structures
 
 class TestResult:
@@ -396,25 +321,6 @@ class ResultPrinter:
         self.end_message()
         exit(1)
 
-
-# If no test files are specified, search for some and use them.
-if not args.filenames:
-    for r,d,f in os.walk("."):
-        for filename in f:
-            if filename.endswith(".js"):
-                args.filenames.append(os.path.join(r,filename))
-
-printer = ResultPrinter()
-
-# What to do if the user hits control-C
-signal.signal(signal.SIGINT, printer.interrupt_handler)
-
-# How should we run this test? With what?
-# By default, we do no setup or teardown, and the test runner is a plaintive echo.
-setup = lambda : 0
-teardown = lambda : 0
-test_runner = lambda filename : ['echo "Something weird is happening!"']
-
 # Does this test try to load other libraries?
 def usesInclude(filename):
     with open(filename) as f:
@@ -466,34 +372,133 @@ def jsRefArgBuilder(filename):
         arglist.append("-no-parasite")
     return arglist
 
-if args.spidermonkey:
-    test_runner = lambda filename : [args.interp_path, filename]
-elif args.nodejs:
-    test_runner = lambda filename : [args.interp_path, filename]
-elif args.lambdaS5:
-    current_dir = os.getcwd()
-    setup = lambda : os.chdir(os.path.dirname(args.interp_path))
-    teardown = lambda : os.chdir(current_dir)
-    test_runner = lambda filename: [os.path.abspath(args.interp_path),
-                                    filename]
-else:
-    test_runner = jsRefArgBuilder
+def main():
+    # Our command-line interface
+    argp = argparse.ArgumentParser(
+        description="Run some Test262-style tests with some JS implementation: by default, with JSRef.")
 
-# Now let's get down to the business of running the tests
-starttime = calendar.timegm(time.gmtime())
-for filename in args.filenames:
-    filename = os.path.abspath(filename)
-    current_test = printer.start_test(filename)
+    argp.add_argument("filenames", metavar="path", nargs="+",
+        help="The test file or directory we want to run. Directory names will recusively run all .js files.")
 
-    setup()
-    test_pipe = subprocess.Popen(test_runner(filename), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    output,errors = test_pipe.communicate()
-    output = output.decode("utf8").encode("ascii","xmlcharrefreplace")
-    errors = errors.decode("utf8").encode("ascii","xmlcharrefreplace")
-    ret = test_pipe.returncode
-    teardown()
+    engines_grp = argp.add_mutually_exclusive_group()
 
-    current_test(ret,output,errors)
+    engines_grp.add_argument("--spidermonkey", action="store_true",
+        help="Test SpiderMonkey instead of JSRef. If you use this, you should probably also use --interp_path")
 
-printer.time_taken = calendar.timegm(time.gmtime()) - starttime
-printer.end_message()
+    engines_grp.add_argument("--lambdaS5", action="store_true",
+        help="Test LambdaS5 instead of JSRef. If you use this, you should probably also use --interp_path")
+
+    engines_grp.add_argument("--nodejs", action="store_true",
+        help="Test node.js instead of JSRef. If you use this, you should probably also use --interp_path")
+
+    argp.add_argument("--interp_path", action="store", metavar="path", default=os.path.join("interp","run_js"),
+        help="Where to find the interpreter.")
+
+    argp.add_argument("--interp_version", action="store", metavar="version", default="",
+        help="The version of the interpreter you're running. Default is the git hash of the current directory.")
+
+    argp.add_argument("--jsonparser", action="store_true",
+        help="Use the JSON parser (Esprima) when running tests.")
+
+    argp.add_argument("--webreport",action="store_true",
+        help="Produce a web-page of your results in the default web directory. Requires pystache.")
+
+    argp.add_argument("--templatedir",action="store",metavar="path", default=os.path.join("test_reports"),
+        help="Where to find our web-templates when producing reports")
+
+    argp.add_argument("--reportdir",action="store",metavar="path",default=os.path.join("test_reports"),
+        help="Where to put our test reports")
+
+    argp.add_argument("--title",action="store",metavar="string", default="",
+        help="Optional title for this test. Will be used in the report filename, so no spaces please!")
+
+    argp.add_argument("--note",action="store",metavar="string", default="",
+        help="Optional explanatory note to be added to the test report.")
+
+    argp.add_argument("--noindex",action="store_true",
+        help="Don't attempt to build an index.html for the reportdir")
+
+    argp.add_argument("--dbsave",action="store_true",
+        help="Save the results of this testrun to the database")
+
+    argp.add_argument("--dbpath",action="store",metavar="path",
+        default="test_data/test_results.db",
+        help="Path to the database to save results in. The default should usually be fine. Please don't mess with this unless you know what you're doing.")
+
+    # Condor infos
+    argp.add_argument("--runid",action="store",metavar="runid",default=0,
+        help="Condor Test run ID, to cross reference condor processes and cluster")
+
+    argp.add_argument("--procid",action="store",metavar="condorprocid",default=0,
+        help="Condor process ID for crossreference with Condor logs")
+
+    argp.add_argument("--psqlconfig",action="store",metavar="psqlconfig",default="",
+        help="Use PostgreSQL backed database, give path to file containing libpq connection string (Indended for Condor use)")
+
+    argp.add_argument("--verbose",action="store_true",
+        help="Print the output of the tests as they happen.")
+
+    argp.add_argument("--debug",action="store_true",
+        help="Run the interpreter with debugging flags (-print-heap -verbose -skip-init).")
+
+    argp.add_argument("--no_parasite",action="store_true",
+        help="Run the interpreter with -no-parasite flag (the options --debug and --verbose might be useless in this mode).")
+
+    args = argp.parse_args()
+
+    # Copy filenames out into local variable, expanding directories
+    for path in args.filenames:
+        if os.path.isdir(path):
+            for r,d,f in os.walk("."):
+                for filename in f:
+                    if filename.endswith(".js"):
+                        filenames.append(os.path.join(r,filename))
+        else:
+            filenames.append(path)
+
+    printer = ResultPrinter()
+
+    # What to do if the user hits control-C
+    signal.signal(signal.SIGINT, printer.interrupt_handler)
+
+    # How should we run this test? With what?
+    # By default, we do no setup or teardown, and the test runner is a plaintive echo.
+    setup = lambda : 0
+    teardown = lambda : 0
+    test_runner = lambda filename : ['echo "Something weird is happening!"']
+
+    if args.spidermonkey:
+        test_runner = lambda filename : [args.interp_path, filename]
+    elif args.nodejs:
+        test_runner = lambda filename : [args.interp_path, filename]
+    elif args.lambdaS5:
+        current_dir = os.getcwd()
+        setup = lambda : os.chdir(os.path.dirname(args.interp_path))
+        teardown = lambda : os.chdir(current_dir)
+        test_runner = lambda filename: [os.path.abspath(args.interp_path),
+                                        filename]
+    else:
+        test_runner = jsRefArgBuilder
+
+    # Now let's get down to the business of running the tests
+    starttime = calendar.timegm(time.gmtime())
+    for filename in args.filenames:
+        filename = os.path.abspath(filename)
+        current_test = printer.start_test(filename)
+
+        setup()
+        test_pipe = subprocess.Popen(test_runner(filename), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output,errors = test_pipe.communicate()
+        output = output.decode("utf8").encode("ascii","xmlcharrefreplace")
+        errors = errors.decode("utf8").encode("ascii","xmlcharrefreplace")
+        ret = test_pipe.returncode
+        teardown()
+
+        current_test(ret,output,errors)
+
+    printer.time_taken = calendar.timegm(time.gmtime()) - starttime
+    printer.end_message()
+
+
+if __name__ == "__main__":
+    main()
