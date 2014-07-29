@@ -16,62 +16,125 @@ import psycopg2
 import time
 import re
 
+JSCERT_ROOT_DIR = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+DEBUG=False
+VERBOSE=False
+
 # Some handy data structures
 
-class TestResult:
+class TestCase:
     """
-    A test result knows what file it came from, whether it passed, failed or
-    aborted, and what output it generated along the way.
+    A test case knows what file it came from, whether it has been run and if so,
+    whether it passed, failed or aborted, and what output it generated along the way.
     """
 
-    # By default, we expect a pass to exit with code 0,
-    # and a fail to exit with code 1.
-    pass_code = 0
-    fail_code = 1
+    # Fake-enum for result
+    UNKNOWN = -1
+    PASS = 0
+    FAIL = 1
+    ABORT = 2
 
     testname = ""
-    filename = ""
-    result = 0
+    filename = ""      # absolute path
+    has_run = False
+    negative = False   # Whether the testcase is expected to fail
+    includes = []      # List of required JS helper files for test to run
+
+    # Test results
+    result = UNKNOWN   # Derived from exit_code by an interpreter class
+    exit_code = -1            # UNIX exit code
     stdout = ""
     stderr = ""
-    negative = False
 
     def __init__(self,filename,result,stdout,stderr):
-        # Are we testing on SpiderMonkey?
-        # That changes the meaning of result codes.
-        if args.spidermonkey:
-            self.fail_code = 3
+        self.filename = os.path.abspath(filename)
+        self.testname = os.path.basename(self.filename)
 
-        self.filename = filename
-        self.testname = os.path.basename(filename)
-        self.result = result
+        with open(filename) as f:
+            # If this was a sputnik test, it may have expected to fail.
+            # If so, we will need to invert the return value later on.
+            buf = f.read()
+            self.negative = "@negative" in buf
+            # Taken from test262, copyright sputnik authors, BSD licenced
+            self.includes = re.findall('\$INCLUDE\([\'"]([^\)]+)[\'"]\)', buf)
+
+    def set_result(self,result,exit_code,stdout,stderr):
+        self.interp_result = result
+        self.exit_code = exit_code
         self.stdout = stdout
         self.stderr = stderr
 
-        # If this was a sputnik test, it may have expected to fail.
-        # If so, we will need to invert the return value later on.
-        with open(filename) as f:
-            # Report the result of this test
-            self.negative = "@negative" in f.read()
+    def set_passed(self):
+        if(self.negative):
+            self.result = self.FAIL
+        else:
+            self.result = self.PASS
 
     def passed(self):
+        return self.result == self.PASS
+
+    def set_failed(self):
         if(self.negative):
-            return self.result==self.fail_code
+            self.result = self.PASS
         else:
-            return self.result==self.pass_code
+            self.result = self.FAIL
+
     def failed(self):
-        if(self.negative):
-            return self.result==self.pass_code
-        else:
-            return self.result==self.fail_code
+        return self.result == self.FAIL
+
+    def set_aborted(self):
+        self.result = self.ABORT
+
     def aborted(self):
-        return not (self.passed() or self.failed())
+        return self.result == self.ABORT
 
     def report_dict(self):
         return {"testname":self.testname,
                 "filename":self.filename,
                 "stdout":self.stdout,
                 "stderr":self.stderr}
+
+    # Does this test try to load other libraries?
+    def usesInclude(self):
+        return len(includes) > 0
+
+class TestResultHandler:
+    """
+    Recieves notifications of events in the test cycle
+
+    A test is the execution of an individual test file
+    A test batch it is a number of sequential executions of tests
+    A test job is a collection of test batches, it may only use one interpreter
+    """
+    def create_job(self):
+        """Called once per user-invokation of the program"""
+        pass
+
+    def create_batch(self):
+        """Called when a batch is scheduled for execution"""
+        pass
+
+    def start_batch(self):
+        """Called before the first test is run from a particular batch"""
+        pass
+
+    def start_test(self,test):
+        """Called before each test is run"""
+        pass
+
+    def finish_test(self,test):
+        """Called after each test is run"""
+        pass
+
+    def finish_batch(self):
+        """Called after the last test from a batch is run"""
+        pass
+
+class SQLiteDBManager(TestResultHandler):
+    pass
+
+class PgDBManager(TestResultHandler):
+    pass
 
 class DBManager:
     PASS = "PASS"
@@ -176,14 +239,7 @@ class PGDBManager(DBManager):
         batchid = cur.fetchone()[0]
         return batchid
 
-
-class ResultPrinter:
-
-    """
-    This class maintains the results of our test run, and provides methods to
-    report those results, on the command line or on the web.
-
-    """
+class CLIResultPrinter(ResultHandler):
     # Some pretty colours for our output messages.
     NORMAL = "\033[00m"
     HEADING = "\033[35m"
@@ -191,23 +247,34 @@ class ResultPrinter:
     FAIL = "\033[31m"
     ABANDON = "\033[33m"
 
-    # Which tests passed, and which failed?
-    passed_tests = []
-    failed_tests = []
-    aborted_tests = []
-
-    # How long did it take? In seconds. Set by whoever actually does the running.
-    time_taken = 0
-
-    # Possibly a database to save our results to
-    dbmanager = None
+    passed_test_count = 0
+    failed_tests = None
+    abandoned_tests = None
 
     def __init__(self):
-        if(args.dbsave):
-            self.dbmanager = DBManager()
-        elif(args.psqlconfig):
-            self.dbmanager = PGDBManager()
-            args.dbsave = True
+        failed_tests = []
+        abandoned_tests = []
+
+    def start_test(self,filename):
+        self.print_heading(filename)
+
+    def finish_test(self,result):
+        if result.passed():
+            self.print_pass("Passed!")
+            self.passed_test_count += 1
+        elif result.failed():
+            self.print_fail("Failed :/")
+            self.failed_tests.append(result)
+        elif result.aborted():
+            self.print_abandon("Aborted...")
+            self.aborted_tests.append(result)
+        else:
+            print self.ABANDON+"Something really weird happened"+self.NORMAL
+        if VERBOSE or DEBUG:
+            print "=== STDOUT ==="
+            print result.stdout
+            print "=== STDERR ==="
+            print result.stderr
 
     def print_heading(self,s):
         print self.HEADING+s+self.NORMAL
@@ -218,26 +285,45 @@ class ResultPrinter:
     def print_abandon(self,s):
         print self.ABANDON+s+self.NORMAL
 
-    def __record_results__(self,result):
+    def end_message(self):
+        if len(self.failed_tests) > 0:
+            print "The following tests failed:"
+            for failure in self.failed_tests:
+                print failure.filename
+        if len(self.aborted_tests) > 0:
+            print "The following tests were abandoned"
+            for abandoned in self.aborted_tests:
+                print abandoned.filename
+        print "There were %d passes, %d fails, and %d abandoned tests." % (self.passed_test_count, len(self.failed_tests), len(self.aborted_tests))
+
+class WebResultPrinter(ResultHandler):
+    """
+    This class maintains the results of our test run, and generates a html report
+    """
+
+    # Which tests passed, and which failed?
+    passed_tests = []
+    failed_tests = []
+    aborted_tests = []
+
+    # Time the testrun
+    starttime = 0
+    time_taken = 0
+
+    def start_batch(self):
+        self.starttime = calendar.timegm(time.gmtime())
+
+    def end_batch(self):
+        self.time_taken = calendar.timegm(time.gmtime()) - self.starttime
+        self.end_message()
+
+    def finish_test(self,result):
         if result.passed():
-            self.print_pass("Passed!")
             self.passed_tests.append(result)
         elif result.failed():
-            self.print_fail("Failed :/")
             self.failed_tests.append(result)
         elif result.aborted():
-            self.print_abandon("Aborted...")
             self.aborted_tests.append(result)
-        else:
-              print "Something really weird happened"
-              exit(1)
-        if args.verbose or args.debug:
-            print result.stdout
-            print result.stderr
-
-    def start_test(self,filename):
-        self.print_heading(filename)
-        return lambda code,stdout,stderr: self.__record_results__(TestResult(filename,code,stdout,stderr))
 
     def make_report(self):
         (sysname, nodename, release, version, machine) = os.uname()
@@ -321,56 +407,179 @@ class ResultPrinter:
         self.end_message()
         exit(1)
 
-# Does this test try to load other libraries?
-def usesInclude(filename):
-    with open(filename) as f:
-        return "$INCLUDE" in f.read()
+class Interpreter:
+    """Base class for Interpreter calling methods"""
+    PASS_CODE = 0
+    FAIL_CODE = 1
+    path = ""
 
-def jsRefArgBuilder(filename):
-    # Normally we run a test like this:
-    #./interp/run_js -jsparser interp/parser/lib/js_parser.jar -test_prelude interp/test_prelude.js -file filename
-    # But if this is a LambdaS5 test, we need additional kit, like this:
-    # ./interp/run_js -jsparser interp/parser/lib/js_parser.jar -test_prelude interp/test_prelude.js -test_prelude tests/LambdaS5/lambda-pre.js -test_prelude filename -file tests/LambdaS5/lambda-post.js
-    # We can tell if it's a LambdaS5 test, because those start with "tests/LambdaS5/unit-tests/".
-    # In addition, we may want to add some debug flags.
-    arglist = [args.interp_path,
-               "-jsparser",
-               os.path.join("interp","parser","lib","js_parser.jar")]
-    if args.jsonparser:
-        arglist.append("-json")
-    if args.debug:
-        arglist.append("-print-heap")
-        arglist.append("-verbose")
-        arglist.append("-skip-init")
-    arglist.append("-test_prelude")
-    arglist.append(os.path.join("interp","test_prelude.js"))
-    if filename.startswith(os.path.join(os.getcwd(),"tests/LambdaS5/unit-tests/")):
+    def set_path(self,path):
+        if path:
+            self.path = path
+
+    def setup(self):
+        pass
+
+    def build_args(self,testcase):
+        return [path, testcase.filename]
+
+    def run_test(self,testcase):
+        """Mutates testcase with appropriate result"""
+        self.setup()
+        command = self.build_args(testcase)
+        test_pipe = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output,errors = test_pipe.communicate()
+
+        output = output.decode("utf8").encode("ascii","xmlcharrefreplace")
+        errors = errors.decode("utf8").encode("ascii","xmlcharrefreplace")
+        ret = test_pipe.returncode
+        self.determine_result(testcase,ret,output,errors)
+        self.teardown()
+
+        test_result = testcase.set_result(result,ret,output,errors)
+
+    def determine_result(self,testcase,ret,out,err):
+        """Returns TestCase.{PASS,FAIL,ABORT} to indicate how the interpreter responded"""
+        if(ret == self.PASS_CODE):
+            testcase.set_passed()
+        elif(ret == self.FAIL_CODE):
+            testcase.set_failed()
+        else:
+            testcase.set_aborted()
+
+    def teardown(self):
+        pass
+
+class Spidermonkey(Interpreter):
+    FAIL_CODE = 3
+
+class NodeJS(Interpreter):
+    pass
+
+class LambdaS5(Interpreter):
+    current_dir = ""
+
+    def setup(self):
+        self.current_dir = os.getcwd()
+        os.chdir(os.path.dirname(self.path))
+
+    def build_args(self,filename):
+        return [os.path.abspath(self.path), filename]
+
+    def teardown(self):
+        os.chdir(current_dir)
+
+class JSRef(Interpreter):
+    interp_dir = os.path.join(JSCERT_ROOT_DIR,"interp")
+    path = os.path.join(interp_dir,"run_js")
+    jsonparser = False
+
+    def build_args(self,filename):
+        # Normally we run a test like this:
+        #./interp/run_js -jsparser interp/parser/lib/js_parser.jar -test_prelude interp/test_prelude.js -file filename
+        # But if this is a LambdaS5 test, we need additional kit, like this:
+        # ./interp/run_js -jsparser interp/parser/lib/js_parser.jar -test_prelude interp/test_prelude.js -test_prelude tests/LambdaS5/lambda-pre.js -test_prelude filename -file tests/LambdaS5/lambda-post.js
+        # We can tell if it's a LambdaS5 test, because those start with "tests/LambdaS5/unit-tests/".
+        # In addition, we may want to add some debug flags.
+        arglist = [self.path,
+                   "-jsparser",
+                   os.path.join(self.interp_dir,"parser","lib","js_parser.jar")]
+        if self.jsonparser:
+            arglist.append("-json")
+        if DEBUG:
+            arglist.append("-print-heap")
+            arglist.append("-verbose")
+            arglist.append("-skip-init")
         arglist.append("-test_prelude")
-        arglist.append("tests/LambdaS5/lambda-pre.js")
-        arglist.append("-test_prelude")
-        arglist.append(filename)
-        arglist.append("-file")
-        arglist.append("tests/LambdaS5/lambda-post.js")
-    elif filename.startswith(os.path.join(os.getcwd(), "tests/SpiderMonkey/")):
-        arglist.append("-test_prelude")
-        arglist.append("interp/test_prelude_SpiderMonkey.js")
-        arglist.append("-test_prelude")
-        arglist.append("tests/SpiderMonkey/tests/shell.js")
-        arglist.append("-file")
-        arglist.append(filename)
-    elif usesInclude(filename):
-        if args.verbose or args.debug:
-            print "Using include libs."
-        arglist.append("-test_prelude")
-        arglist.append("interp/libloader.js")
-        arglist.append("-file")
-        arglist.append(filename)
-    else:
-        arglist.append("-file")
-        arglist.append(filename)
-    if args.no_parasite:
-        arglist.append("-no-parasite")
-    return arglist
+        arglist.append(os.path.join("interp","test_prelude.js"))
+        if filename.startswith(os.path.join(os.getcwd(),"tests/LambdaS5/unit-tests/")):
+            arglist.append("-test_prelude")
+            arglist.append("tests/LambdaS5/lambda-pre.js")
+            arglist.append("-test_prelude")
+            arglist.append(filename)
+            arglist.append("-file")
+            arglist.append("tests/LambdaS5/lambda-post.js")
+        elif filename.startswith(os.path.join(os.getcwd(), "tests/SpiderMonkey/")):
+            arglist.append("-test_prelude")
+            arglist.append("interp/test_prelude_SpiderMonkey.js")
+            arglist.append("-test_prelude")
+            arglist.append("tests/SpiderMonkey/tests/shell.js")
+            arglist.append("-file")
+            arglist.append(filename)
+        elif self.usesInclude(filename):
+            if VERBOSE or DEBUG:
+                print "Using include libs."
+            arglist.append("-test_prelude")
+            arglist.append("interp/libloader.js")
+            arglist.append("-file")
+            arglist.append(filename)
+        else:
+            arglist.append("-file")
+            arglist.append(filename)
+        if args.no_parasite:
+            arglist.append("-no-parasite")
+        return arglist
+
+class Runtest:
+    """Main class"""
+
+    filenames = None
+    interpreter = None
+    handlers = None
+
+    def __init__(self,interpreter):
+        self.filenames = []
+        self.handlers = []
+        self.interpreter = interpreter
+
+    def add_path(self,path):
+        # Sanitise pathname
+        path = os.path.realpath(path)
+
+        if not os.path.exists(path):
+            raise IOError("No such file or directory: %s" % path)
+
+        if os.path.isdir(path):
+            self.add_dir(path)
+        else:
+            self.add_file(path)
+
+    def add_file(self,filename):
+        self.filenames.append(filename)
+
+    def add_dir(self,dirname):
+        for r,d,f in os.walk("."):
+            for filename in f:
+                filename = os.path.join(r,filename)
+                if os.path.isfile(filename) and filename.endswith(".js"):
+                    self.add_file(filename)
+
+    def add_result_handler(self,handler):
+        self.handlers.append(handler)
+
+    def run(self):
+        # What to do if the user hits control-C
+        signal.signal(signal.SIGINT, printer.interrupt_handler)
+
+        # Now let's get down to the business of running the tests
+        for handler in self.handlers:
+            handler.start_batch()
+
+        for filename in self.filenames:
+            testcase = TestCase(filename)
+            for handler in self.handlers:
+                handler.start_test(testcase)
+
+            self.interpreter.run_test(testcase)
+
+            # Inform handlers of a test result
+            # We share the same TestResult among handlers
+            for handler in self.handlers:
+                handler.finish_test(testcase)
+
+        # Tell handlers that we're done
+        for handler in self.handlers:
+            handler.end_batch()
 
 def main():
     # Our command-line interface
@@ -380,7 +589,7 @@ def main():
     argp.add_argument("filenames", metavar="path", nargs="+",
         help="The test file or directory we want to run. Directory names will recusively run all .js files.")
 
-    argp.add_argument("--interp_path", action="store", metavar="path", default=os.path.join("interp","run_js"),
+    argp.add_argument("--interp_path", action="store", metavar="path", default="",
         help="Where to find the interpreter.")
 
     argp.add_argument("--interp_version", action="store", metavar="version", default="",
@@ -389,15 +598,15 @@ def main():
     argp.add_argument("--jsonparser", action="store_true",
         help="Use the JSON parser (Esprima) when running tests.")
 
-    engines_grp = argp.add_argument_group(title="Alternative JS Engine Selection")
+    engines_grp = argp.add_argument_group(title="Alternative JS Engine Selection",description="All of these options probably should also have --interp_path set. Some some system defaults may be attempted.")
     engines_ex_grp = engines_grp.add_mutually_exclusive_group()
-    engines_ex_grp.add_argument("--spidermonkey", action="store_true",
+    engines_ex_grp.add_argument("--spidermonkey", action="store", dest="interpreter", const=Spidermonkey(),
         help="Test SpiderMonkey instead of JSRef. If you use this, you should probably also use --interp_path")
 
-    engines_ex_grp.add_argument("--lambdaS5", action="store_true",
+    engines_ex_grp.add_argument("--lambdaS5", action="store", dest="interpreter", const=LambdaS5(),
         help="Test LambdaS5 instead of JSRef. If you use this, you should probably also use --interp_path")
 
-    engines_ex_grp.add_argument("--nodejs", action="store_true",
+    engines_ex_grp.add_argument("--nodejs", action="store", dest="interpreter", const=NodeJS(),
         help="Test node.js instead of JSRef. If you use this, you should probably also use --interp_path")
 
     report_grp = argp.add_argument_group(title="Report Options")
@@ -454,59 +663,36 @@ def main():
 
     args = argp.parse_args()
 
-    # Copy filenames out into local variable, expanding directories
-    for path in args.filenames:
-        if os.path.isdir(path):
-            for r,d,f in os.walk("."):
-                for filename in f:
-                    if filename.endswith(".js"):
-                        filenames.append(os.path.join(r,filename))
-        else:
-            filenames.append(path)
+    VERBOSE = args.verbose
+    DEBUG = args.debug
 
-    printer = ResultPrinter()
+    runtests = Runtests()
 
-    # What to do if the user hits control-C
-    signal.signal(signal.SIGINT, printer.interrupt_handler)
-
-    # How should we run this test? With what?
-    # By default, we do no setup or teardown, and the test runner is a plaintive echo.
-    setup = lambda : 0
-    teardown = lambda : 0
-    test_runner = lambda filename : ['echo "Something weird is happening!"']
-
-    if args.spidermonkey:
-        test_runner = lambda filename : [args.interp_path, filename]
-    elif args.nodejs:
-        test_runner = lambda filename : [args.interp_path, filename]
-    elif args.lambdaS5:
-        current_dir = os.getcwd()
-        setup = lambda : os.chdir(os.path.dirname(args.interp_path))
-        teardown = lambda : os.chdir(current_dir)
-        test_runner = lambda filename: [os.path.abspath(args.interp_path),
-                                        filename]
-    else:
-        test_runner = jsRefArgBuilder
-
-    # Now let's get down to the business of running the tests
-    starttime = calendar.timegm(time.gmtime())
+    # Tests to run
     for filename in args.filenames:
-        filename = os.path.abspath(filename)
-        current_test = printer.start_test(filename)
+        runtests.add_path(filename)
 
-        setup()
-        test_pipe = subprocess.Popen(test_runner(filename), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output,errors = test_pipe.communicate()
-        output = output.decode("utf8").encode("ascii","xmlcharrefreplace")
-        errors = errors.decode("utf8").encode("ascii","xmlcharrefreplace")
-        ret = test_pipe.returncode
-        teardown()
+    # Interpreter to use
+    interpreter = JSRef()
+    if interpreter in args:
+        interpreter = args.interpreter
+    interpreter.set_path(args.interp_path)
+    if args.jsonparser:
+        interpreter.jsonparser = True
+    runtests.set_interpreter(args.interpreter)
 
-        current_test(ret,output,errors)
+    # How to save results
+    if(args.dbsave):
+        dbmanager = SQLiteDBManager()
+    elif(args.psqlconfig):
+        dbmanager = PgDBManager()
 
-    printer.time_taken = calendar.timegm(time.gmtime()) - starttime
-    printer.end_message()
+    runtest.add_handler(CLIResultPrinter())
 
+    if(not args.condor and args.webreport):
+        runtests.add_handler(WebResultPrinter())
+
+    runtests.run()
 
 if __name__ == "__main__":
     main()
