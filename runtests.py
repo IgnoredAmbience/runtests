@@ -16,7 +16,7 @@ import psycopg2
 import time
 import re
 
-JSCERT_ROOT_DIR = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
+JSCERT_ROOT_DIR = os.path.dirname(os.path.realpath(__file__))
 DEBUG=False
 VERBOSE=False
 
@@ -346,9 +346,6 @@ class WebResultPrinter(ResultHandler):
                 "failures":map(lambda x:x.report_dict() , self.failed_tests),
                 "passes":map(lambda x:x.report_dict() , self.passed_tests)}
 
-    def update_database(self):
-        self.dbmanager.report_results(self.make_report())
-
     def impl_name(self):
         if args.spidermonkey: return "SpiderMonkey"
         if args.nodejs: return "node.js"
@@ -413,6 +410,13 @@ class Interpreter:
     FAIL_CODE = 1
     path = ""
 
+    def get_name(self):
+        return "Unknown Interpreter: " + os.path.basename(self.path)
+
+    def get_version(self):
+        return "Version unknown"
+
+    # Intereter "lifecycle" follows
     def set_path(self,path):
         if path:
             self.path = path
@@ -453,11 +457,18 @@ class Interpreter:
 class Spidermonkey(Interpreter):
     FAIL_CODE = 3
 
+    def get_name(self):
+        return "SpiderMonkey"
+
 class NodeJS(Interpreter):
-    pass
+    def get_name(self):
+        return "node.js"
 
 class LambdaS5(Interpreter):
     current_dir = ""
+
+    def get_name(self):
+        return "LambdaS5"
 
     def setup(self):
         self.current_dir = os.getcwd()
@@ -473,6 +484,9 @@ class JSRef(Interpreter):
     interp_dir = os.path.join(JSCERT_ROOT_DIR,"interp")
     path = os.path.join(interp_dir,"run_js")
     jsonparser = False
+
+    def get_name(self):
+        return "JSRef"
 
     def build_args(self,filename):
         # Normally we run a test like this:
@@ -520,7 +534,7 @@ class JSRef(Interpreter):
             arglist.append("-no-parasite")
         return arglist
 
-class Runtest:
+class Runtests:
     """Main class"""
 
     filenames = None
