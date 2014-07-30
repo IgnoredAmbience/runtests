@@ -15,6 +15,7 @@ import sqlite3 as db
 import psycopg2
 import time
 import re
+import urllib
 
 JSCERT_ROOT_DIR = os.path.dirname(os.path.realpath(__file__))
 DEBUG=False
@@ -22,7 +23,20 @@ VERBOSE=False
 
 # Some handy data structures
 
-class TestCase:
+class Timer:
+    start_time = 0
+    stop_time = 0
+
+    def start_timer(self):
+        self.start_time = time.time()
+
+    def stop_timer(self):
+        self.stop_time = time.time()
+
+    def get_duration(self):
+        return self.stop_time - self.start_time
+
+class TestCase(Timer):
     """
     A test case knows what file it came from, whether it has been run and if so,
     whether it passed, failed or aborted, and what output it generated along the way.
@@ -58,45 +72,47 @@ class TestCase:
             # Taken from test262, copyright sputnik authors, BSD licenced
             self.includes = re.findall('\$INCLUDE\([\'"]([^\)]+)[\'"]\)', buf)
 
-    def set_result(self,result,exit_code,stdout,stderr):
-        self.interp_result = result
+    def set_result(self, interp_result, exit_code, stdout, stderr):
+        self.interp_result = interp_result
+
+        if interp_result == Interpreter.ABORT:
+            self.result = TestCase.ABORT
+        elif self.negative:
+            if interp_result == Interpreter.PASS:
+                self.result = TestCase.FAIL
+            else:
+                self.result = TestCase.PASS
+        else:
+            if interp_result == Interpreter.PASS:
+                self.result = TestCase.PASS
+            else:
+                self.result = TestCase.FAIL
+
         self.exit_code = exit_code
         self.stdout = stdout
         self.stderr = stderr
 
-    def set_passed(self):
-        if(self.negative):
-            self.result = self.FAIL
-        else:
-            self.result = self.PASS
+    def get_result(self):
+        return self.result
 
     def passed(self):
         return self.result == self.PASS
 
-    def set_failed(self):
-        if(self.negative):
-            self.result = self.PASS
-        else:
-            self.result = self.FAIL
-
     def failed(self):
         return self.result == self.FAIL
-
-    def set_aborted(self):
-        self.result = self.ABORT
 
     def aborted(self):
         return self.result == self.ABORT
 
     def report_dict(self):
-        return {"testname":self.testname,
-                "filename":self.filename,
-                "stdout":self.stdout,
-                "stderr":self.stderr}
+        return {"testname": self.testname,
+                "filename": self.filename,
+                "stdout": self.stdout,
+                "stderr": self.stderr}
 
     # Does this test try to load other libraries?
     def usesInclude(self):
-        return len(includes) > 0
+        return len(self.includes) > 0
 
 class TestResultHandler:
     """
@@ -106,27 +122,27 @@ class TestResultHandler:
     A test batch it is a number of sequential executions of tests
     A test job is a collection of test batches, it may only use one interpreter
     """
-    def create_job(self):
+    def create_job(self, job):
         """Called once per user-invokation of the program"""
         pass
 
-    def create_batch(self):
+    def create_batch(self, batch):
         """Called when a batch is scheduled for execution"""
         pass
 
-    def start_batch(self):
+    def start_batch(self, batch):
         """Called before the first test is run from a particular batch"""
         pass
 
-    def start_test(self,test):
+    def start_test(self, test):
         """Called before each test is run"""
         pass
 
-    def finish_test(self,test):
+    def finish_test(self, test):
         """Called after each test is run"""
         pass
 
-    def finish_batch(self):
+    def finish_batch(self, batch):
         """Called after the last test from a batch is run"""
         pass
 
@@ -243,7 +259,7 @@ class PGDBManager(DBManager):
         batchid = cur.fetchone()[0]
         return batchid
 
-class CLIResultPrinter(ResultHandler):
+class CLIResultPrinter(TestResultHandler):
     # Some pretty colours for our output messages.
     NORMAL = "\033[00m"
     HEADING = "\033[35m"
@@ -251,34 +267,23 @@ class CLIResultPrinter(ResultHandler):
     FAIL = "\033[31m"
     ABANDON = "\033[33m"
 
-    passed_test_count = 0
-    failed_tests = None
-    abandoned_tests = None
+    def start_test(self, testcase):
+        self.print_heading(testcase.filename)
 
-    def __init__(self):
-        failed_tests = []
-        abandoned_tests = []
-
-    def start_test(self,filename):
-        self.print_heading(filename)
-
-    def finish_test(self,result):
-        if result.passed():
+    def finish_test(self, testcase):
+        if testcase.passed():
             self.print_pass("Passed!")
-            self.passed_test_count += 1
-        elif result.failed():
+        elif testcase.failed():
             self.print_fail("Failed :/")
-            self.failed_tests.append(result)
-        elif result.aborted():
+        elif testcase.aborted():
             self.print_abandon("Aborted...")
-            self.aborted_tests.append(result)
         else:
             print self.ABANDON+"Something really weird happened"+self.NORMAL
         if VERBOSE or DEBUG:
             print "=== STDOUT ==="
-            print result.stdout
+            print testcase.stdout
             print "=== STDERR ==="
-            print result.stderr
+            print testcase.stderr
 
     def print_heading(self,s):
         print self.HEADING+s+self.NORMAL
@@ -289,131 +294,111 @@ class CLIResultPrinter(ResultHandler):
     def print_abandon(self,s):
         print self.ABANDON+s+self.NORMAL
 
-    def end_message(self):
-        if len(self.failed_tests) > 0:
+    def finish_batch(self, batch):
+        if len(batch.failed_tests) > 0:
             print "The following tests failed:"
-            for failure in self.failed_tests:
+            for failure in batch.failed_tests:
                 print failure.filename
-        if len(self.aborted_tests) > 0:
+        if len(batch.aborted_tests) > 0:
             print "The following tests were abandoned"
-            for abandoned in self.aborted_tests:
+            for abandoned in batch.aborted_tests:
                 print abandoned.filename
-        print "There were %d passes, %d fails, and %d abandoned tests." % (self.passed_test_count, len(self.failed_tests), len(self.aborted_tests))
+        print ("There were %d passes, %d fails, and %d abandoned tests." %
+            (len(batch.passed_tests), len(batch.failed_tests), len(batch.aborted_tests)))
 
-class WebResultPrinter(ResultHandler):
+class WebResultPrinter(TestResultHandler):
     """
     This class maintains the results of our test run, and generates a html report
     """
 
-    # Which tests passed, and which failed?
-    passed_tests = []
-    failed_tests = []
-    aborted_tests = []
+    # Configuration
+    templatedir = ""
+    reportdir = ""
+    noindex = False
 
-    # Time the testrun
-    starttime = 0
-    time_taken = 0
+    def __init__(self, templatedir, reportdir, noindex):
+        try:
+            import pystache
+        except ImportError as e:
+            raise ImportError("%s: pystache is required for web reports" % e.message)
 
-    def start_batch(self):
-        self.starttime = calendar.timegm(time.gmtime())
+        self.noindex = noindex
+        self.set_paths(templatedir, reportdir)
 
-    def end_batch(self):
-        self.time_taken = calendar.timegm(time.gmtime()) - self.starttime
-        self.end_message()
+    def set_paths(self, templatedir, reportdir):
+        """Check all files required for html output exist before we begin"""
+        templates = ["template.tmpl","test_results.tmpl"]
+        if not self.noindex:
+            templates.append("index.tmpl")
 
-    def finish_test(self,result):
-        if result.passed():
-            self.passed_tests.append(result)
-        elif result.failed():
-            self.failed_tests.append(result)
-        elif result.aborted():
-            self.aborted_tests.append(result)
+        for f in templates:
+            p = os.path.join(templatedir, f)
+            if not os.access(p, os.R_OK):
+                raise Exception("Required html template %s is not readable." % p)
 
-    def make_report(self):
-        (sysname, nodename, release, version, machine) = os.uname()
+        if not os.access(reportdir, os.W_OK):
+            raise Exception("Report output directory %s is not writable." % reportdir)
+        if not self.noindex:
+            p = os.path.join(reportdir, "index.html")
+            if os.path.isfile(p) and not os.access(p, os.W_OK):
+                raise Exception("Report index file %s not writable." % p)
 
-        return {"testtitle":args.title,
-                "testnote":args.note,
-                "implementation":self.impl_name(),
-                "system":sysname,
-                "timetaken":self.time_taken,
-                "osnodename":nodename,
-                "osrelease":release,
-                "osversion":version,
-                "hardware":machine,
-                "time":time.asctime(time.gmtime()),
-                "user":getpass.getuser(),
-                "numpasses":len(self.passed_tests),
-                "numfails":len(self.failed_tests),
-                "numaborts":len(self.aborted_tests),
-                "aborts":map(lambda x:x.report_dict() , self.aborted_tests),
-                "failures":map(lambda x:x.report_dict() , self.failed_tests),
-                "passes":map(lambda x:x.report_dict() , self.passed_tests)}
+        self.templatedir = templatedir
+        self.reportdir = reportdir
 
-    def impl_name(self):
-        if args.spidermonkey: return "SpiderMonkey"
-        if args.nodejs: return "node.js"
-        if args.lambdaS5: return "LambdaS5"
-        return "JSRef"
+    def finish_batch(self, batch):
+        self.produce_web_page(batch.make_report())
 
-
-    def produce_web_page(self):
+    def produce_web_page(self, report):
         import pystache
 
-        report = self.make_report()
-
         simplerenderer = pystache.Renderer(escape = lambda u: u)
-        with open(os.path.join(args.templatedir,"template.tmpl"),"r") as outer:
-            with open(os.path.join(args.templatedir,"test_results.tmpl"),"r") as template:
+        with open(os.path.join(self.templatedir,"template.tmpl"),"r") as outer:
+            with open(os.path.join(self.templatedir,"test_results.tmpl"),"r") as template:
                 outfilenamebits = ["report",getpass.getuser(),self.impl_name()]
-                if args.title : outfilenamebits.append(args.title)
+                if self.title : outfilenamebits.append(self.title)
                 outfilenamebits.extend([time.strftime("%Y-%m-%dT%H%M%SZ",time.gmtime())])
                 outfilename = "-".join(outfilenamebits)+".html"
-                with open(os.path.join(args.reportdir,outfilename),"w") as outfile:
+                with open(os.path.join(self.reportdir,outfilename),"w") as outfile:
                     outfile.write(simplerenderer.render(outer.read(),{"body":pystache.render(template.read(),report)}))
 
-        if not args.noindex: self.index_reports()
+        if not self.noindex: self.index_reports()
 
     def index_reports(self):
         import pystache
-        import urllib
+
         # Get a list of all non-index html files in the reportdir
-        filenames = filter(lambda x:x!="index.html",filter(lambda x:x.endswith(".html"),os.listdir(args.reportdir)))
+        filenames = filter(lambda x:x!="index.html",filter(lambda x:x.endswith(".html"),os.listdir(self.reportdir)))
         filenames.sort()
         filenames = map(lambda x:{"linkname":os.path.basename(x),"filename":urllib.quote(os.path.basename(x))},filenames)
         simplerenderer = pystache.Renderer(escape = lambda u: u)
-        with open(os.path.join(args.templatedir,"template.tmpl"),"r") as outer:
-            with open(os.path.join(args.templatedir,"index.tmpl"),"r") as template:
-                with open(os.path.join(args.reportdir,"index.html"),"w") as outfile:
+        with open(os.path.join(self.templatedir,"template.tmpl"),"r") as outer:
+            with open(os.path.join(self.templatedir,"index.tmpl"),"r") as template:
+                with open(os.path.join(self.reportdir,"index.html"),"w") as outfile:
                     outfile.write(simplerenderer.render(outer.read(),{"body":pystache.render(template.read(),{"testlist":filenames})}))
-
-
-    def end_message(self):
-        if len(self.failed_tests)>0:
-            print "The following tests failed:"
-            for failure in self.failed_tests:
-                print failure.filename
-        if len(self.aborted_tests)>0:
-            print "The following tests were abandoned"
-            for abandoned in self.aborted_tests:
-                print abandoned.filename
-        print "There were "+str(len(self.passed_tests))+" passes, "+str(len(self.failed_tests))+"  fails, and "+str(len(self.aborted_tests))+" abandoned."
-        if args.webreport:
-            self.produce_web_page()
-        if args.dbsave:
-            self.update_database()
 
 class Interpreter:
     """Base class for Interpreter calling methods"""
-    PASS_CODE = 0
-    FAIL_CODE = 1
+    pass_code = 0
+    fail_code = 1
     path = ""
+    version = "Version unknown"
+
+    PASS = 0
+    FAIL = 1
+    ABORT = 2
+
+    def __init__(self):
+        self.set_version()
 
     def get_name(self):
-        return "Unknown Interpreter: " + os.path.basename(self.path)
+        return os.path.basename(self.path)
 
-    def get_version(self):
-        return "Version unknown"
+    def set_version(self):
+        if self.path:
+            # Requires Python 2.7
+            output = subprocess.check_output([self.path, "--version"])
+            self.version = output.strip()
 
     # Intereter "lifecycle" follows
     def set_path(self,path):
@@ -423,43 +408,48 @@ class Interpreter:
     def setup(self):
         pass
 
-    def build_args(self,testcase):
-        return [path, testcase.filename]
+    def build_args(self, testcase):
+        return [self.path, testcase.filename]
 
-    def run_test(self,testcase):
+    def run_test(self, testcase):
         """Mutates testcase with appropriate result"""
         self.setup()
         command = self.build_args(testcase)
+
+        testcase.start_timer()
         test_pipe = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         output,errors = test_pipe.communicate()
+        testcase.stop_timer()
 
         output = output.decode("utf8").encode("ascii","xmlcharrefreplace")
         errors = errors.decode("utf8").encode("ascii","xmlcharrefreplace")
         ret = test_pipe.returncode
-        self.determine_result(testcase,ret,output,errors)
+        result = self.determine_result(testcase,ret,output,errors)
         self.teardown()
 
-        test_result = testcase.set_result(result,ret,output,errors)
+        testcase.set_result(result, ret, output, errors)
 
     def determine_result(self,testcase,ret,out,err):
         """Returns TestCase.{PASS,FAIL,ABORT} to indicate how the interpreter responded"""
-        if(ret == self.PASS_CODE):
-            testcase.set_passed()
-        elif(ret == self.FAIL_CODE):
-            testcase.set_failed()
+        if ret == self.pass_code:
+            return Interpreter.PASS
+        elif ret == self.fail_code:
+            return Interpreter.FAIL
         else:
-            testcase.set_aborted()
+            return Interpreter.ABORT
 
     def teardown(self):
         pass
 
 class Spidermonkey(Interpreter):
-    FAIL_CODE = 3
+    fail_code = 3
 
     def get_name(self):
         return "SpiderMonkey"
 
 class NodeJS(Interpreter):
+    path = "/usr/bin/nodejs"
+
     def get_name(self):
         return "node.js"
 
@@ -470,6 +460,7 @@ class LambdaS5(Interpreter):
         return "LambdaS5"
 
     def setup(self):
+        # TODO: Use cwd parameter of Popen instead of chdir-ing??
         self.current_dir = os.getcwd()
         os.chdir(os.path.dirname(self.path))
 
@@ -477,15 +468,25 @@ class LambdaS5(Interpreter):
         return [os.path.abspath(self.path), filename]
 
     def teardown(self):
-        os.chdir(current_dir)
+        os.chdir(self.current_dir)
 
 class JSRef(Interpreter):
     interp_dir = os.path.join(JSCERT_ROOT_DIR,"interp")
     path = os.path.join(interp_dir,"run_js")
     jsonparser = False
+    no_parasite = False
+
+    def __init__(self, no_parasite=False, jsonparser=False):
+        self.no_parasite = no_parasite
+        self.jsonparser = jsonparser
 
     def get_name(self):
         return "JSRef"
+
+    # TODO: Swap to standard once parser has a version flag
+    def set_version(self):
+        out = subprocess.Popen(["git","rev-parse","HEAD"])
+        self.version = out.strip()
 
     def build_args(self,filename):
         # Normally we run a test like this:
@@ -529,9 +530,74 @@ class JSRef(Interpreter):
         else:
             arglist.append("-file")
             arglist.append(filename)
-        if args.no_parasite:
+        if self.no_parasite:
             arglist.append("-no-parasite")
         return arglist
+
+class Job:
+    """Information about a particular test job"""
+    dbid = 0
+    title = ""
+    note = ""
+    impl_name = ""
+    impl_version = ""
+    create_time = 0
+    user = ""
+
+    def __init__(self):
+        self.create_time = time.time()
+
+class TestBatch(Timer):
+    """Information about a particular test batch"""
+    dbid = 0
+    job = None
+    # Just in case we're running in a distributed way and hit a local package mismatch
+    impl_version = ""
+
+    # Machine info
+    os = ""
+    host = ""
+    osrelease = ""
+    osversion = ""
+    architecture = ""
+
+    # Classified test cases
+    passed_tests = None
+    failed_tests = None
+    aborted_tests = None
+
+    def __init__(self, job):
+        (sysname, nodename, release, version, machine) = os.uname()
+        self.passed_tests = []
+        self.failed_tests = []
+        self.aborted_tests = []
+
+    def test_finished(self, testcase):
+        if testcase.passed():
+            self.passed_tests.append(testcase)
+        elif testcase.failed():
+            self.failed_tests.append(testcase)
+        else:
+            self.aborted_tests.append(testcase)
+
+    def make_report(self):
+        return {"testtitle": self.job.title,
+                "testnote": self.job.note,
+                "implementation": self.job.impl_name,
+                "system": self.os,
+                "timetaken": self.get_duration(),
+                "osnodename": self.host,
+                "osrelease": self.osrelease,
+                "osversion": self.osversion,
+                "hardware": self.architecture,
+                "time": time.asctime(time.gmtime()),
+                "user": self.job.user,
+                "numpasses": len(self.passed_tests),
+                "numfails": len(self.failed_tests),
+                "numaborts": len(self.aborted_tests),
+                "aborts": map(lambda x:x.report_dict() , self.aborted_tests),
+                "failures": map(lambda x:x.report_dict() , self.failed_tests),
+                "passes": map(lambda x:x.report_dict() , self.passed_tests)}
 
 class Runtests:
     """Main class"""
@@ -572,10 +638,12 @@ class Runtests:
     def add_result_handler(self,handler):
         self.handlers.append(handler)
 
-    def run(self):
+    def run(self, batch=TestBatch()):
         # Now let's get down to the business of running the tests
         for handler in self.handlers:
-            handler.start_batch()
+            handler.start_batch(batch)
+
+        batch.start_timer()
 
         for filename in self.filenames:
             testcase = TestCase(filename)
@@ -584,14 +652,18 @@ class Runtests:
 
             self.interpreter.run_test(testcase)
 
+            batch.test_finished(testcase)
+
             # Inform handlers of a test result
             # We share the same TestResult among handlers
             for handler in self.handlers:
                 handler.finish_test(testcase)
 
+        batch.stop_timer()
+
         # Tell handlers that we're done
         for handler in self.handlers:
-            handler.end_batch()
+            handler.end_batch(batch)
 
     def interrupt_handler(self,signal,frame):
         if self.interrupted:
@@ -687,6 +759,8 @@ def main():
 
     args = argp.parse_args()
 
+    global VERBOSE
+    global DEBUG
     VERBOSE = args.verbose
     DEBUG = args.debug
 
@@ -697,12 +771,10 @@ def main():
         runtests.add_path(filename)
 
     # Interpreter to use
-    interpreter = JSRef()
+    interpreter = JSRef(no_parasite=args.no_parasite, jsonparser=args.jsonparser)
     if interpreter in args:
         interpreter = args.interpreter
     interpreter.set_path(args.interp_path)
-    if args.jsonparser:
-        interpreter.jsonparser = True
     runtests.set_interpreter(args.interpreter)
 
     # How to save results
@@ -711,7 +783,7 @@ def main():
     elif(args.psqlconfig):
         dbmanager = PgDBManager()
 
-    runtest.add_handler(CLIResultPrinter())
+    runtests.add_handler(CLIResultPrinter())
 
     if(not args.condor and args.webreport):
         runtests.add_handler(WebResultPrinter())
