@@ -130,6 +130,10 @@ class TestResultHandler:
         """Called after the last test from a batch is run"""
         pass
 
+    def interrupt_handler(self, signal, frame):
+        """Called on a handler when the test run is terminating due to SIGINT"""
+        pass
+
 class SQLiteDBManager(TestResultHandler):
     pass
 
@@ -399,11 +403,6 @@ class WebResultPrinter(ResultHandler):
         if args.dbsave:
             self.update_database()
 
-    def interrupt_handler(self,signal,frame):
-        print "Interrupted..."
-        self.end_message()
-        exit(1)
-
 class Interpreter:
     """Base class for Interpreter calling methods"""
     PASS_CODE = 0
@@ -541,6 +540,8 @@ class Runtests:
     interpreter = None
     handlers = None
 
+    interrupted = False
+
     def __init__(self,interpreter):
         self.filenames = []
         self.handlers = []
@@ -572,9 +573,6 @@ class Runtests:
         self.handlers.append(handler)
 
     def run(self):
-        # What to do if the user hits control-C
-        signal.signal(signal.SIGINT, printer.interrupt_handler)
-
         # Now let's get down to the business of running the tests
         for handler in self.handlers:
             handler.start_batch()
@@ -594,6 +592,18 @@ class Runtests:
         # Tell handlers that we're done
         for handler in self.handlers:
             handler.end_batch()
+
+    def interrupt_handler(self,signal,frame):
+        if self.interrupted:
+            print "Terminating, please be patient..."
+            return
+
+        print "Interrupted... Running pending output actions"
+        self.interrupted = True
+
+        for handler in self.handlers:
+            handler.interrupt_handler(signal,frame)
+        exit(1)
 
 def main():
     # Our command-line interface
@@ -705,6 +715,9 @@ def main():
 
     if(not args.condor and args.webreport):
         runtests.add_handler(WebResultPrinter())
+
+    # What to do if the user hits control-C
+    signal.signal(signal.SIGINT, runtests.interrupt_handler)
 
     runtests.run()
 
