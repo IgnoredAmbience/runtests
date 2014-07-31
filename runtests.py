@@ -10,28 +10,27 @@ import signal
 import subprocess
 import os
 import getpass
-import calendar
 import sqlite3 as db
 import psycopg2
-import time
+import datetime
 import re
 import urllib
 
-JSCERT_ROOT_DIR = os.path.dirname(os.path.realpath(__file__))
+JSCERT_ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
 DEBUG=False
 VERBOSE=False
 
 # Some handy data structures
 
 class Timer:
-    start_time = 0
-    stop_time = 0
+    start_time = None
+    stop_time = None
 
     def start_timer(self):
-        self.start_time = time.time()
+        self.start_time = datetime.now()
 
     def stop_timer(self):
-        self.stop_time = time.time()
+        self.stop_time = datetime.now()
 
     def get_duration(self):
         return self.stop_time - self.start_time
@@ -43,20 +42,20 @@ class TestCase(Timer):
     """
 
     # Fake-enum for result
-    UNKNOWN = -1
-    PASS = 0
-    FAIL = 1
-    ABORT = 2
+    UNKNOWN = 0
+    PASS = 1
+    FAIL = 2
+    ABORT = 3
+    RESULT_TEXT = ["UNKNOWN","PASS","FAIL","ABORT"]
 
     testname = ""
     filename = ""      # absolute path
-    has_run = False
     negative = False   # Whether the testcase is expected to fail
-    includes = []      # List of required JS helper files for test to run
+    includes = None    # List of required JS helper files for test to run
 
     # Test results
     result = UNKNOWN   # Derived from exit_code by an interpreter class
-    exit_code = -1            # UNIX exit code
+    exit_code = -1     # UNIX exit code
     stdout = ""
     stderr = ""
 
@@ -64,13 +63,14 @@ class TestCase(Timer):
         self.filename = os.path.abspath(filename)
         self.testname = os.path.basename(self.filename)
 
-        with open(filename) as f:
-            # If this was a sputnik test, it may have expected to fail.
-            # If so, we will need to invert the return value later on.
-            buf = f.read()
-            self.negative = "@negative" in buf
-            # Taken from test262, copyright sputnik authors, BSD licenced
-            self.includes = re.findall('\$INCLUDE\([\'"]([^\)]+)[\'"]\)', buf)
+    def fetch_file_info(self):
+        if self.includes == None
+            with open(self.filename) as f:
+                # If this was a sputnik test, it may have expected to fail.
+                # If so, we will need to invert the return value later on.
+                buf = f.read()
+                self.negative = "@negative" in buf
+                self.includes = re.findall('\$INCLUDE\([\'"]([^\)]+)[\'"]\)', buf)
 
     def set_result(self, interp_result, exit_code, stdout, stderr):
         self.interp_result = interp_result
@@ -95,6 +95,9 @@ class TestCase(Timer):
     def get_result(self):
         return self.result
 
+    def get_result_text(self):
+        return self.RESULT_TEXT[self.result]
+
     def passed(self):
         return self.result == self.PASS
 
@@ -104,15 +107,33 @@ class TestCase(Timer):
     def aborted(self):
         return self.result == self.ABORT
 
+    def get_relpath(self):
+        return os.path.relpath(self.filename, JSCERT_ROOT_DIR)
+
     def report_dict(self):
         return {"testname": self.testname,
                 "filename": self.filename,
                 "stdout": self.stdout,
                 "stderr": self.stderr}
 
+    def db_dict(self):
+        return {"test_id": self.get_relpath(),
+                "result": self.get_result_text(),
+                "exit_code": self.exit_code,
+                "stdout": self.stdout,
+                "stderr": self.stderr}
+
+    def is_negative(self):
+        self.fetch_file_info()
+        return self.negative
+
+    def get_includes(self):
+        self.fetch_file_info()
+        return self.includes
+
     # Does this test try to load other libraries?
     def usesInclude(self):
-        return len(self.includes) > 0
+        return len(self.get_includes()) > 0
 
 class TestResultHandler:
     """
@@ -122,14 +143,6 @@ class TestResultHandler:
     A test batch it is a number of sequential executions of tests
     A test job is a collection of test batches, it may only use one interpreter
     """
-    def create_job(self, job):
-        """Called once per user-invokation of the program"""
-        pass
-
-    def create_batch(self, batch):
-        """Called when a batch is scheduled for execution"""
-        pass
-
     def start_batch(self, batch):
         """Called before the first test is run from a particular batch"""
         pass
@@ -485,7 +498,7 @@ class JSRef(Interpreter):
 
     # TODO: Swap to standard once parser has a version flag
     def set_version(self):
-        out = subprocess.Popen(["git","rev-parse","HEAD"])
+        out = subprocess.check_output(["git","rev-parse","HEAD"])
         self.version = out.strip()
 
     def build_args(self,filename):
@@ -541,25 +554,45 @@ class Job:
     note = ""
     impl_name = ""
     impl_version = ""
-    create_time = 0
+    repo_version = ""
+    create_time = None
     user = ""
 
+    condor_cluster = 0
+
     def __init__(self):
-        self.create_time = time.time()
+        self.create_time = datetime.now()
+
+    def set_repo_version(self):
+        out = subprocess.check_output(["git","rev-parse","HEAD"])
+        self.repo_version = out.strip()
+
+    def db_dict(self):
+        return {"title": self.title,
+                "note": self.note,
+                "impl_name": self.impl_name,
+                "impl_version": self.impl_version,
+                "create_time": self.create_time,
+                "repo_version": self.repo_version,
+                "username": self.user,
+                "condor_cluster": self.condor_cluster}
+
 
 class TestBatch(Timer):
     """Information about a particular test batch"""
     dbid = 0
     job = None
-    # Just in case we're running in a distributed way and hit a local package mismatch
-    impl_version = ""
 
     # Machine info
-    os = ""
-    host = ""
+    system = ""
+    osnodename = ""
     osrelease = ""
     osversion = ""
-    architecture = ""
+    hardware = ""
+
+    condor_proc = 0
+
+    pending_tests = None
 
     # Classified test cases
     passed_tests = None
@@ -568,9 +601,13 @@ class TestBatch(Timer):
 
     def __init__(self, job):
         (sysname, nodename, release, version, machine) = os.uname()
+        self.pending_tests = []
         self.passed_tests = []
         self.failed_tests = []
         self.aborted_tests = []
+
+    def add_testcase(self, testcase):
+        self.pending_tests.append(testcase)
 
     def test_finished(self, testcase):
         if testcase.passed():
@@ -584,12 +621,12 @@ class TestBatch(Timer):
         return {"testtitle": self.job.title,
                 "testnote": self.job.note,
                 "implementation": self.job.impl_name,
-                "system": self.os,
+                "system": self.system,
                 "timetaken": self.get_duration(),
-                "osnodename": self.host,
+                "osnodename": self.osnodename,
                 "osrelease": self.osrelease,
                 "osversion": self.osversion,
-                "hardware": self.architecture,
+                "hardware": self.hardware,
                 "time": time.asctime(time.gmtime()),
                 "user": self.job.user,
                 "numpasses": len(self.passed_tests),
@@ -598,6 +635,16 @@ class TestBatch(Timer):
                 "aborts": map(lambda x:x.report_dict() , self.aborted_tests),
                 "failures": map(lambda x:x.report_dict() , self.failed_tests),
                 "passes": map(lambda x:x.report_dict() , self.passed_tests)}
+
+    def db_dict(self):
+        return {"system": self.system,
+                "osnodename": self.osnodename,
+                "osrelease": self.osrelease,
+                "osversion": self.osversion,
+                "hardware": self.hardware,
+                "start_time": self.start_time,
+                "end_time": self.end_time,
+                "condor_proc": self.condor_proc}
 
 class Runtests:
     """Main class"""
