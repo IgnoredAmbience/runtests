@@ -1,10 +1,15 @@
 /* Mostly compatible with both sqlite and postgres, except:
-   * All serial types must be replaced with integers, and autoincrement appended to the line
+   * Postgres doesn't do autoincrement, run this regexp search and replace:
+      s/\(.*\)integer\(.*\) autoincrement/\1serial\2/
+   * SQLite doesn't do schemas, it errors on those lines, this is fine.
    * SQLite doesn't do enums, it errors on the CREATE TYPE line, this is safe to ignore.
      It defaults to text mode for the field due to the _text suffix of the type name
 */
-
-CREATE TYPE result_text AS ENUM ('PASS', 'FAIL', 'ABORT'); /* safe to ignore error for sqlite */
+/*** Safe to ignore errors from SQLite ***/
+CREATE SCHEMA jscert;
+USE SCHEMA jscert;
+CREATE TYPE result_text AS ENUM ('PASS', 'FAIL', 'ABORT');
+/*** End of safe to ignore errors from SQLite ***/
 
 CREATE TABLE test_jobs
   ( id integer primary key autoincrement
@@ -32,18 +37,19 @@ CREATE TABLE test_batches
   );
 
 CREATE TABLE test_cases
-  ( filepath text primary key  /* path is relative to jscert root directory */
+  ( id text primary key  /* path is relative to jscert root directory */
   , negative boolean
   );
 
 CREATE TABLE test_runs
   ( id integer primary key autoincrement
-  , test_id text references test_cases(filepath)
+  , test_id text references test_cases(id)
   , batch_id integer references test_batches(id)
   , result result_text
   , exit_code smallint
   , stdout text
   , stderr text
+  , duration integer
   );
 
 CREATE TABLE test_groups

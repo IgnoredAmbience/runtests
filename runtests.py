@@ -15,6 +15,8 @@ import psycopg2
 import datetime
 import re
 import urllib
+from collections import dequeue
+import pwd
 
 JSCERT_ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
 DEBUG=False
@@ -32,14 +34,19 @@ class Timer:
     def stop_timer(self):
         self.stop_time = datetime.now()
 
-    def get_duration(self):
+    def get_delta(self):
         return self.stop_time - self.start_time
+
+    def get_duration(self):
+        return self.get_delta().total_seconds()
 
 class TestCase(Timer):
     """
     A test case knows what file it came from, whether it has been run and if so,
     whether it passed, failed or aborted, and what output it generated along the way.
     """
+    _table = "test_runs"
+    _dbid = 0
 
     # Fake-enum for result
     UNKNOWN = 0
@@ -64,7 +71,7 @@ class TestCase(Timer):
         self.testname = os.path.basename(self.filename)
 
     def fetch_file_info(self):
-        if self.includes == None
+        if self.includes == None:
             with open(self.filename) as f:
                 # If this was a sputnik test, it may have expected to fail.
                 # If so, we will need to invert the return value later on.
@@ -117,11 +124,17 @@ class TestCase(Timer):
                 "stderr": self.stderr}
 
     def db_dict(self):
-        return {"test_id": self.get_relpath(),
+        return {"id": self._dbid,
+                "test_id": self.get_relpath(),
                 "result": self.get_result_text(),
                 "exit_code": self.exit_code,
                 "stdout": self.stdout,
-                "stderr": self.stderr}
+                "stderr": self.stderr,
+                "duration": self.get_duation()}
+
+    def db_tc_dict(self):
+        return {"id": self.get_relpath(),
+                "negative": self.negative}
 
     def is_negative(self):
         self.fetch_file_info()
@@ -163,22 +176,93 @@ class TestResultHandler:
         """Called on a handler when the test run is terminating due to SIGINT"""
         pass
 
-class SQLiteDBManager(TestResultHandler):
-    pass
-
-class PgDBManager(TestResultHandler):
-    pass
-
-class DBManager:
-    PASS = "PASS"
-    FAIL = "FAIL"
-    ABORT = "ABORT"
-
-    INSERT_SINGLE_STMT = "insert into single_test_runs(test_id, batch_id, status, stdout, stderr) values (?,?,?,?,?)"
-
+class DBManager(TestResultHandler):
     con = None
-    curdir = os.getcwd()
 
+    def connect(self):
+        """Only implement for db backends with limited connection pools"""
+        pass
+
+    def disconnect(self):
+        """Only implement for db backends with limited connection pools"""
+        pass
+
+    def insert_testcases(self, cur, testcases):
+        tcds = map(lambda t: t.db_tc_dict(), testcases)
+        self.insert_ignore_many(cur, TestCase._table, tcds)
+
+    def create_job(self, cur, job):
+        self.insert_object(cur, job)
+
+    def create_batch(self, cur, batch):
+        self.insert_object(cur, batch)
+
+    def start_batch(self, batch):
+        with self.conn.cursor() as cur:
+            self.update_object(cur, batch)
+        self.commit()
+        self.disconnect()
+
+    def finish_batch(self, batch):
+        self.connect()
+        with self.conn.cursor() as cur:
+            self.update_object(cur, batch)
+            self.update_objects(cur, batch.get_finished_testcases())
+        self.commit()
+
+    # Helper functions
+    def build_fields(self, fields):
+        """
+        Builds a field list pattern to substitute into a SQL statement, eg:
+        ["a","b","c"] ==> [ "a,b,c", ":a,:b,:c" ]
+        """
+        key_pairs = map(lambda k: (k, self.subst_pattern(k)), fields)
+        key_lists = zip(key_pairs)
+        return map(",".join, key_lists)
+
+    def insert(self, cur, table, dic):
+        """Retrieval of inserted id is implementation-specific"""
+        raise NotImplementedError
+
+    def insert_many(self, cur, table, coll):
+        (fnames, fsubst) = build_fields(coll[0].keys())
+        sql = ("INSERT INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
+        cur.executemany(sql, coll)
+
+    def insert_ignore_many(self, cur, table, dic):
+        """Insert or ignore row with colliding ID and commits"""
+        raise NotImplementedError
+
+    def insert_object(self, cur, obj):
+        if not obj._table:
+            raise Exception("Object not suitable for database insertion")
+        else:
+            obj._dbid = self.insert(cur, obj._table, obj.db_dict())
+
+    def update(self, cur, table, dic):
+        if "id" not in dic:
+            raise Exception("Needs id field")
+        self.update_many(cur, table, [dic])
+
+    def update_many(self, cur, table, coll):
+        """Expects dbid to be set on all dicts being passed in for updating"""
+        (fnames, fsubst) = build_fields(coll[0].keys())
+        sql = ("UPDATE %s SET (%s) = (%s) WHERE id = %s" % (table, fnames, fsubst, self.subst_pattern("id")))
+        cur.executemany(sql, coll)
+
+    def update_object(self, cur, obj):
+        if not obj._table:
+            raise Exception("Object not suitable for database insertion")
+        else:
+            self.update(cur, obj._table, obj.db_dict())
+
+    def update_objects(self, cur, objs):
+        """Assumes all objects passed in are of same class"""
+        table = objs[0]._table
+        dicts = map(lambda o: o.db_dict(), objs)
+        self.update_many(self, cur, table, dicts)
+
+class SQLiteDBManager(DBManager):
     def __init__(self):
         if not os.path.isfile(args.dbpath):
             print args.dbpath
@@ -187,90 +271,58 @@ class DBManager:
             exit(1)
         self.con = db.connect(args.dbpath)
 
-    def makerelative(self,path):
-        return re.sub("^"+self.curdir+"/","",path)
+    def subst_pattern(self, field):
+        return (":%s" % field)
 
-    def create_batch(self,cur,results,version):
-        cur.execute("insert into test_batch_runs(time, implementation, impl_path, impl_version, title, notes, timestamp, system, osnodename, osrelease, osversion, hardware) values (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (results["timetaken"],
-                     results["implementation"],
-                     args.interp_path,
-                     version,
-                     results["testtitle"],
-                     results["testnote"],
-                     calendar.timegm(time.gmtime()),
-                     results["system"],
-                     results["osnodename"],
-                     results["osrelease"],
-                     results["osversion"],
-                     results["hardware"]))
-        cur.execute("SELECT id FROM test_batch_runs ORDER BY id DESC LIMIT 1")
-        batchid = cur.fetchone()[0]
-        return batchid
+    def insert(self, cur, table, dic):
+        (fnames, fsubst) = build_fields(dic.keys())
+        sql = ("INSERT INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
+        cur.execute(sql, dic)
+        return cur.lastrowid
 
-    def report_results(self,results):
-        test_pipe = subprocess.Popen(["git","rev-parse","HEAD"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        githash,errors = test_pipe.communicate()
-        version = re.sub(r'\n','',githash)
-        if args.interp_version:
-            version = args.interp_version
-        #with self.con:
-        try:
-            cur = self.con.cursor()
-            batchid = self.create_batch(cur, results, version)
+    def insert_ignore_many(self, cur, table, coll):
+        """Insert or ignore rows with colliding ID and commits"""
+        (fnames, fsubst) = build_fields(coll[0].keys())
+        sql = ("INSERT OR IGNORE INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
+        cur.executemany(sql, dic)
+        self.conn.commit()
 
-            def insert_single(status,case):
-                cur.execute(self.INSERT_SINGLE_STMT,
-                            (self.makerelative(case["filename"]),
-                             batchid,
-                             status,
-                             case["stdout"],
-                             case["stderr"]))
+class PostgresDBManager(DBManager):
+    connstr = ""
+    schema = ""
 
-            for case in results["aborts"]:
-                # Insert abort cases
-                insert_single(self.ABORT,case)
-            for case in results["failures"]:
-                # Insert fail cases
-                insert_single(self.FAIL,case)
-            for case in results["passes"]:
-                # Insert pass cases
-                insert_single(self.PASS,case)
-            self.con.commit()
-        except Exception as e:
-            print "Error"
-            print e
-            exit(1)
+    def __init__(self, connstr, schema="jscert"):
+        self.connstr = connstr
+        self.schema = schema
 
-# When running concurrently as a distributed system, we cannot use sqlite over nfs due to locking issues
-# We additionally batch tests into an unbrella test run using the passed in runid
-class PGDBManager(DBManager):
-    def __init__(self):
-        with open(args.psqlconfig) as f:
-            psqlconfig = f.readline()
+    def connect(self):
+        if not self.conn or self.conn.closed:
+            self.conn = pyscopg2.connect(self.connstr)
+            with self.conn.cursor() as cur:
+                cur.execute("SET SCHEMA %s", self.schema)
+            self.conn.commit()
 
-        self.con = psycopg2.connect(psqlconfig)
-        self.INSERT_SINGLE_STMT = self.INSERT_SINGLE_STMT.replace("?","%s")
+    def disconnect(self):
+        self.conn.close()
 
-    def create_batch(self,cur,results,version):
-        cur.execute("insert into test_batch_runs(time, implementation, impl_path, impl_version, title, notes, timestamp, system, osnodename, osrelease, osversion, hardware, run_id, condor_proc) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (results["timetaken"],
-                     results["implementation"],
-                     args.interp_path,
-                     version,
-                     results["testtitle"],
-                     results["testnote"],
-                     calendar.timegm(time.gmtime()),
-                     results["system"],
-                     results["osnodename"],
-                     results["osrelease"],
-                     results["osversion"],
-                     results["hardware"],
-                     args.runid,
-                     args.procid))
-        cur.execute("SELECT id FROM test_batch_runs ORDER BY id DESC LIMIT 1")
-        batchid = cur.fetchone()[0]
-        return batchid
+    def subst_pattern(self, field):
+        return ("%%(%s)" % field)
+
+    def insert(self, cur, table, dic):
+        (fnames, fsubst) = build_fields(dic.keys())
+        sql = ("INSERT INTO %s (%s) VALUES (%s) RETURNING id" % (table, fnames, fsubst))
+        cur.execute(sql, dic)
+        return cur.fetchone()[0]
+
+    def insert_ignore_many(self, cur, table, coll):
+        """Insert or ignore rows with colliding ID, and commits"""
+        (fnames, fsubst) = build_fields[0].keys())
+        sql = ("INSERT INTO %s (%s) SELECT %s WHERE NOT EXISTS (SELECT 1 FROM %s WHERE id = %s)" %
+               (table, fnames, fsubst, table, self.subst_pattern("id")))
+
+        cur.execute("LOCK TABLE mailing_list IN SHARE ROW EXCLUSIVE MODE")
+        cur.executemany(sql, coll)
+        self.conn.commit()
 
 class CLIResultPrinter(TestResultHandler):
     # Some pretty colours for our output messages.
@@ -549,7 +601,8 @@ class JSRef(Interpreter):
 
 class Job:
     """Information about a particular test job"""
-    dbid = 0
+    _table = "test_jobs"
+    _dbid = 0
     title = ""
     note = ""
     impl_name = ""
@@ -562,13 +615,16 @@ class Job:
 
     def __init__(self):
         self.create_time = datetime.now()
+        self.set_repo_version()
+        self.user = pwd.getpwuid(os.geteuid()).pw_name
 
     def set_repo_version(self):
         out = subprocess.check_output(["git","rev-parse","HEAD"])
         self.repo_version = out.strip()
 
     def db_dict(self):
-        return {"title": self.title,
+        return {"id": self._dbid,
+                "title": self.title,
                 "note": self.note,
                 "impl_name": self.impl_name,
                 "impl_version": self.impl_version,
@@ -580,7 +636,8 @@ class Job:
 
 class TestBatch(Timer):
     """Information about a particular test batch"""
-    dbid = 0
+    _table = "test_batches"
+    _dbid = 0
     job = None
 
     # Machine info
@@ -601,13 +658,22 @@ class TestBatch(Timer):
 
     def __init__(self, job):
         (sysname, nodename, release, version, machine) = os.uname()
-        self.pending_tests = []
+        self.pending_tests = dequeue()
         self.passed_tests = []
         self.failed_tests = []
         self.aborted_tests = []
 
     def add_testcase(self, testcase):
         self.pending_tests.append(testcase)
+
+    def has_testcase(self):
+        return len(self.pending_tests) > 0
+
+    def get_testcase(self):
+        return self.pending_tests.popleft()
+
+    def get_finished_testcases(self):
+        return self.passed_tests + self.failed_tests + self.aborted_tests
 
     def test_finished(self, testcase):
         if testcase.passed():
@@ -637,26 +703,28 @@ class TestBatch(Timer):
                 "passes": map(lambda x:x.report_dict() , self.passed_tests)}
 
     def db_dict(self):
-        return {"system": self.system,
-                "osnodename": self.osnodename,
-                "osrelease": self.osrelease,
-                "osversion": self.osversion,
-                "hardware": self.hardware,
-                "start_time": self.start_time,
-                "end_time": self.end_time,
-                "condor_proc": self.condor_proc}
+        d = {"id": self._dbid,
+             "system": self.system,
+             "osnodename": self.osnodename,
+             "osrelease": self.osrelease,
+             "osversion": self.osversion,
+             "hardware": self.hardware,
+             "start_time": self.start_time,
+             "end_time": self.end_time,
+             "condor_proc": self.condor_proc}
+        if self.job != None:
+            d['job_id'] = self.job._dbid
+        return d
 
 class Runtests:
     """Main class"""
 
-    filenames = None
     interpreter = None
     handlers = None
 
     interrupted = False
 
     def __init__(self,interpreter):
-        self.filenames = []
         self.handlers = []
         self.interpreter = interpreter
 
@@ -685,15 +753,15 @@ class Runtests:
     def add_result_handler(self,handler):
         self.handlers.append(handler)
 
-    def run(self, batch=TestBatch()):
+    def run(self, batch):
         # Now let's get down to the business of running the tests
         for handler in self.handlers:
             handler.start_batch(batch)
 
         batch.start_timer()
 
-        for filename in self.filenames:
-            testcase = TestCase(filename)
+        while batch.has_testcase():
+            testcase = batch.get_testcase()
             for handler in self.handlers:
                 handler.start_test(testcase)
 
@@ -810,6 +878,9 @@ def main():
     global DEBUG
     VERBOSE = args.verbose
     DEBUG = args.debug
+
+
+    exit(0)
 
     runtests = Runtests()
 
