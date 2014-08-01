@@ -320,7 +320,7 @@ class PostgresDBManager(DBManager):
         sql = ("INSERT INTO %s (%s) SELECT %s WHERE NOT EXISTS (SELECT 1 FROM %s WHERE id = %s)" %
                (table, fnames, fsubst, table, self.subst_pattern("id")))
 
-        cur.execute("LOCK TABLE mailing_list IN SHARE ROW EXCLUSIVE MODE")
+        cur.execute("LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE" % table)
         cur.executemany(sql, coll)
         self.conn.commit()
 
