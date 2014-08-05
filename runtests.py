@@ -316,7 +316,7 @@ class PostgresDBManager(DBManager):
 
     def insert_ignore_many(self, cur, table, coll):
         """Insert or ignore rows with colliding ID, and commits"""
-        (fnames, fsubst) = build_fields[0].keys())
+        (fnames, fsubst) = build_fields[0].keys()
         sql = ("INSERT INTO %s (%s) SELECT %s WHERE NOT EXISTS (SELECT 1 FROM %s WHERE id = %s)" %
                (table, fnames, fsubst, table, self.subst_pattern("id")))
 
@@ -779,6 +779,31 @@ class Runtests:
         # Tell handlers that we're done
         for handler in self.handlers:
             handler.end_batch(batch)
+
+    def submit_condor(self):
+        import htcondor
+        import classad
+
+        test_batches = self.batch_tests(tests, num)
+
+        c = classad.ClassAd()
+        c['AccountingGroup'] = 'jscert.' + job.user
+        c['ShouldTransferFiles'] = 'IF_NEEDED'
+        c['Owner'] = job.user
+        c['Cmd'] = __file__
+        c['Arguments'] = "$$([tests[ProcId]])"
+
+        c['tests'] = map(" ".join, test_batches)
+
+        sched = htcondor.Schedd()
+        cluster_id = sched.submit(c, n)
+
+    def batch_tests(self, tests, num):
+        """[a, b, c, d...] -> [[a,b], [c,d]...]"""
+        l = [[]]
+        for t in tests:
+            l[-1].append(t) if len(l[-1] < num) else l.append([t])
+        return l
 
     def interrupt_handler(self,signal,frame):
         if self.interrupted:
