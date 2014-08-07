@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-A mini test harness. Runs all the files you specify through an interpreter
+A not-so-mini test harness. Runs all the files you specify through an interpreter
 you specify, and collates the exit codes for you. Call with the -h switch to
 find out about options.
 """
@@ -66,7 +66,7 @@ class TestCase(Timer):
     stdout = ""
     stderr = ""
 
-    def __init__(self,filename,result,stdout,stderr):
+    def __init__(self, filename):
         self.filename = os.path.abspath(filename)
         self.testname = os.path.basename(self.filename)
 
@@ -306,7 +306,7 @@ class PostgresDBManager(DBManager):
         self.conn.close()
 
     def subst_pattern(self, field):
-        return ("%%(%s)" % field)
+        return ("%%(%s)s" % field)
 
     def insert(self, cur, table, dic):
         (fnames, fsubst) = build_fields(dic.keys())
@@ -453,17 +453,28 @@ class Interpreter:
     FAIL = 1
     ABORT = 2
 
-    def __init__(self):
-        self.set_version()
+    def __init__(self, version=""):
+        self.set_version(version)
 
     def get_name(self):
         return os.path.basename(self.path)
 
-    def set_version(self):
+    def get_version(self):
+        return self.version
+
+    def set_version(self, version=""):
+        if version:
+            self.version = version
+        else:
+            self.version = self.determine_version()
+
+    def determine_version(self):
         if self.path:
             # Requires Python 2.7
             output = subprocess.check_output([self.path, "--version"])
-            self.version = output.strip()
+            return output.strip()
+        else:
+            return "Unknown version"
 
     # Intereter "lifecycle" follows
     def set_path(self,path):
@@ -549,7 +560,7 @@ class JSRef(Interpreter):
         return "JSRef"
 
     # TODO: Swap to standard once parser has a version flag
-    def set_version(self):
+    def determine_version(self):
         out = subprocess.check_output(["git","rev-parse","HEAD"])
         self.version = out.strip()
 
@@ -610,17 +621,33 @@ class Job:
     repo_version = ""
     create_time = None
     user = ""
-
     condor_cluster = 0
+    condor_scheduler = ""
 
-    def __init__(self):
+    batch_size = 0
+    batches = None
+
+    def __init__(self, title, note, impl, batch_size=0):
         self.create_time = datetime.now()
+        self.impl_name = impl.get_name()
+        self.impl_version = impl.get_version()
         self.set_repo_version()
         self.user = pwd.getpwuid(os.geteuid()).pw_name
+        self.batch_size = batch_size
+        self.batches = []
+        self.new_batch()
 
     def set_repo_version(self):
-        out = subprocess.check_output(["git","rev-parse","HEAD"])
+        out = subprocess.check_output(["git","rev-parse","HEAD"], cwd=JSCERT_ROOT_DIR)
         self.repo_version = out.strip()
+
+    def new_batch(self):
+        self.batches.append(TestBatch(self))
+
+    def add_testcase(self, testcase):
+        if self.batch_size and len(self.batches[-1]) >= self.batch_size:
+            self.new_batch()
+        self.batches[-1].add_testcase(testcase)
 
     def db_dict(self):
         return {"id": self._dbid,
@@ -631,7 +658,8 @@ class Job:
                 "create_time": self.create_time,
                 "repo_version": self.repo_version,
                 "username": self.user,
-                "condor_cluster": self.condor_cluster}
+                "condor_cluster": self.condor_cluster,
+                "condor_scheduler": self.condor_scheduler}
 
 
 class TestBatch(Timer):
@@ -662,6 +690,9 @@ class TestBatch(Timer):
         self.passed_tests = []
         self.failed_tests = []
         self.aborted_tests = []
+
+    def __len__(self):
+        return len(self.pending_tests)
 
     def add_testcase(self, testcase):
         self.pending_tests.append(testcase)
@@ -719,8 +750,8 @@ class TestBatch(Timer):
 class Runtests:
     """Main class"""
 
-    interpreter = None
     handlers = None
+    db = None
 
     interrupted = False
 
@@ -728,7 +759,10 @@ class Runtests:
         self.handlers = []
         self.interpreter = interpreter
 
-    def add_path(self,path):
+    def add_result_handler(self,handler):
+        self.handlers.append(handler)
+
+    def add_path(self, path):
         # Sanitise pathname
         path = os.path.realpath(path)
 
@@ -740,9 +774,6 @@ class Runtests:
         else:
             self.add_file(path)
 
-    def add_file(self,filename):
-        self.filenames.append(filename)
-
     def add_dir(self,dirname):
         for r,d,f in os.walk("."):
             for filename in f:
@@ -750,8 +781,9 @@ class Runtests:
                 if os.path.isfile(filename) and filename.endswith(".js"):
                     self.add_file(filename)
 
-    def add_result_handler(self,handler):
-        self.handlers.append(handler)
+
+    self add_file(self, filename):
+
 
     def run(self, batch):
         # Now let's get down to the business of running the tests
@@ -784,14 +816,15 @@ class Runtests:
         import htcondor
         import classad
 
-        test_batches = self.batch_tests(tests, num)
+        test_batches = self.batch_tests(tests, num_per_batch)
+        n = len(test_batches)
 
         c = classad.ClassAd()
         c['AccountingGroup'] = 'jscert.' + job.user
         c['ShouldTransferFiles'] = 'IF_NEEDED'
         c['Owner'] = job.user
         c['Cmd'] = __file__
-        c['Arguments'] = "$$([tests[ProcId]])"
+        c['Arguments'] = "--condor_run --runid= --procid= $$([tests[ProcId]])"
 
         c['tests'] = map(" ".join, test_batches)
 
@@ -889,7 +922,10 @@ def main():
     # Condor infos
     condor_args = argp.add_argument_group(title="Condor Options")
     condor_args.add_argument("--condor", action="store_true",
-        help="Run these testcases on the Condor distributed computing cluster, requires --psqlconfig")
+        help="Schedule these testcases on the Condor distributed computing cluster, requires --psqlconfig")
+
+    condor_args.add_argument("--condor_run", action="store_true",
+        help="(Internal) Run scheduled Condor testcases (for individual jobs)")
 
     condor_args.add_argument("--runid",action="store",metavar="runid",default=0,
         help="(Internal) Test run ID, to cross reference condor processes and cluster")
@@ -909,16 +945,18 @@ def main():
 
     runtests = Runtests()
 
-    # Tests to run
-    for filename in args.filenames:
-        runtests.add_path(filename)
 
     # Interpreter to use
     interpreter = JSRef(no_parasite=args.no_parasite, jsonparser=args.jsonparser)
     if interpreter in args:
         interpreter = args.interpreter
     interpreter.set_path(args.interp_path)
-    runtests.set_interpreter(args.interpreter)
+
+    job = Job(args.title, args.note, interpreter)
+
+    # Tests to run
+    for filename in args.filenames:
+        job.add_path(filename)
 
     # How to save results
     if(args.dbsave):
@@ -928,13 +966,13 @@ def main():
 
     runtests.add_handler(CLIResultPrinter())
 
-    if(not args.condor and args.webreport):
+    if (not args.condor) and args.webreport:
         runtests.add_handler(WebResultPrinter())
 
     # What to do if the user hits control-C
     signal.signal(signal.SIGINT, runtests.interrupt_handler)
 
-    runtests.run()
+    runtests.run(job)
 
 if __name__ == "__main__":
     main()

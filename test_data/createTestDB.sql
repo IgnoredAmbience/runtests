@@ -21,6 +21,7 @@ CREATE TABLE test_jobs
   , repo_version text
   , username text
   , condor_cluster smallint
+  , condor_scheduler text
   );
 
 CREATE TABLE test_batches
