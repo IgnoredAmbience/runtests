@@ -66,8 +66,8 @@ class TestCase(Timer):
     stdout = ""
     stderr = ""
 
-    def __init__(self, filename):
-        self.filename = os.path.abspath(filename)
+    def __init__(self, filename, is_absolute=False):
+        self.filename = filename if is_absolute else os.path.realpath(filename)
         self.testname = os.path.basename(self.filename)
 
     def fetch_file_info(self):
@@ -649,6 +649,10 @@ class Job:
             self.new_batch()
         self.batches[-1].add_testcase(testcase)
 
+    def add_testcases(self, testcases):
+        for testcase in testcases:
+            self.add_testcase(testcase)
+
     def db_dict(self):
         return {"id": self._dbid,
                 "title": self.title,
@@ -762,30 +766,30 @@ class Runtests:
     def add_result_handler(self,handler):
         self.handlers.append(handler)
 
-    def get_testcases_from_paths(self, paths):
-        return []
+    def get_testcases_from_paths(self, paths, testcases=[]):
+        return reduce(
+            lambda ts, p: self.get_testcases_from_path(p, ts),
+            paths, [])
 
-    def get_testcases_from_path(self, path):
-        # Sanitise pathname
-        path = os.path.realpath(path)
-
+    def get_testcases_from_path(self, path, testcases=[]):
         if not os.path.exists(path):
             raise IOError("No such file or directory: %s" % path)
 
         if os.path.isdir(path):
-            self.add_dir(path)
+            return self.get_testcases_from_dir(path, testcases)
         else:
-            return TestCase(path)
+            testcases.append(TestCase(path))
+            return testcases
 
-    def get_testcases_from_dir(self, dirname):
-        for r,d,f in os.walk("."):
+    def get_testcases_from_dir(self, dirname, testcases=[]):
+        """Recusively walk the given directory looking for .js files, does not traverse symbolic links"""
+        dirname = os.path.realpath(dirname)
+        for r,d,f in os.walk(dirname):
             for filename in f:
                 filename = os.path.join(r,filename)
                 if os.path.isfile(filename) and filename.endswith(".js"):
-                    self.add_file(filename)
-
-
-    self add_file(self, filename):
+                    testcases.append(TestCase(filename, is_absolute=True))
+        return testcases
 
 
     def run(self, batch):
