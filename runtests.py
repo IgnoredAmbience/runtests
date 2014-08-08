@@ -762,7 +762,10 @@ class Runtests:
     def add_result_handler(self,handler):
         self.handlers.append(handler)
 
-    def add_path(self, path):
+    def get_testcases_from_paths(self, paths):
+        return []
+
+    def get_testcases_from_path(self, path):
         # Sanitise pathname
         path = os.path.realpath(path)
 
@@ -772,9 +775,9 @@ class Runtests:
         if os.path.isdir(path):
             self.add_dir(path)
         else:
-            self.add_file(path)
+            return TestCase(path)
 
-    def add_dir(self,dirname):
+    def get_testcases_from_dir(self, dirname):
         for r,d,f in os.walk("."):
             for filename in f:
                 filename = os.path.join(r,filename)
