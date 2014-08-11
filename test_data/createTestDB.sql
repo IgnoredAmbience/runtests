@@ -1,15 +1,18 @@
-/* Mostly compatible with both sqlite and postgres, except:
+/*
+Testing database schema. Import using:
+  runtests.py --createdb
+
+If doing a manual import read these notes:
+Mostly compatible with both sqlite and postgres, except:
    * Postgres doesn't do autoincrement, run this regexp search and replace:
       s/\(.*\)integer\(.*\) autoincrement/\1serial\2/
-   * SQLite doesn't do schemas, it errors on those lines, this is fine.
+   * SQLite doesn't do schemas.
    * SQLite doesn't do enums, it errors on the CREATE TYPE line, this is safe to ignore.
      It defaults to text mode for the field due to the _text suffix of the type name
+The autoincrement and *** POSTGRES ONLY *** lines are modified appropriately by the runtests.py
+database create command.
 */
-/*** Safe to ignore errors from SQLite ***/
-CREATE SCHEMA jscert;
-USE SCHEMA jscert;
-CREATE TYPE result_text AS ENUM ('PASS', 'FAIL', 'ABORT');
-/*** End of safe to ignore errors from SQLite ***/
+/*** POSTGRES ONLY *** CREATE TYPE result_text AS ENUM ('PASS', 'FAIL', 'ABORT'); ***/
 
 CREATE TABLE test_jobs
   ( id integer primary key autoincrement
@@ -60,7 +63,7 @@ CREATE TABLE test_groups
 
 CREATE TABLE test_group_memberships
   ( group_id integer references test_groups(id)
-  , test_id text references test_cases(filepath)
+  , test_id text references test_cases(id)
   );
 
 CREATE TABLE fail_groups
@@ -71,5 +74,5 @@ CREATE TABLE fail_groups
 
 CREATE TABLE fail_group_memberships
   ( group_id integer references fail_groups(id)
-  , test_id text references test_cases(filepath)
+  , test_id text references test_cases(id)
   );

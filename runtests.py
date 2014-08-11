@@ -12,13 +12,14 @@ import os
 import getpass
 import sqlite3 as db
 import psycopg2
-import datetime
+from datetime import datetime, time
 import re
 import urllib
-from collections import dequeue
+from collections import deque
 import pwd
 
 JSCERT_ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+DB_SCHEMA_LOCATION = os.path.join(JSCERT_ROOT_DIR, 'test_data', 'createTestDB.sql')
 DEBUG=False
 VERBOSE=False
 
@@ -55,8 +56,7 @@ class TestCase(Timer):
     ABORT = 3
     RESULT_TEXT = ["UNKNOWN","PASS","FAIL","ABORT"]
 
-    testname = ""
-    filename = ""      # absolute path
+    filename = ""
     negative = False   # Whether the testcase is expected to fail
     includes = None    # List of required JS helper files for test to run
 
@@ -66,9 +66,10 @@ class TestCase(Timer):
     stdout = ""
     stderr = ""
 
-    def __init__(self, filename, is_absolute=False):
-        self.filename = filename if is_absolute else os.path.realpath(filename)
-        self.testname = os.path.basename(self.filename)
+    def __init__(self, filename, lazy=True):
+        self.filename = os.path.relpath(filename, JSCERT_ROOT_DIR)
+        if not lazy:
+            self.fetch_file_info()
 
     def fetch_file_info(self):
         if self.includes == None:
@@ -99,6 +100,9 @@ class TestCase(Timer):
         self.stdout = stdout
         self.stderr = stderr
 
+    def get_testname(self):
+        return os.path.basename(self.filename)
+
     def get_result(self):
         return self.result
 
@@ -115,10 +119,13 @@ class TestCase(Timer):
         return self.result == self.ABORT
 
     def get_relpath(self):
-        return os.path.relpath(self.filename, JSCERT_ROOT_DIR)
+        return self.filename
+
+    def get_realpath(self):
+        return os.path.join(JSCERT_ROOT_DIR, self.filename)
 
     def report_dict(self):
-        return {"testname": self.testname,
+        return {"testname": self.get_testname(),
                 "filename": self.filename,
                 "stdout": self.stdout,
                 "stderr": self.stderr}
@@ -177,7 +184,8 @@ class TestResultHandler:
         pass
 
 class DBManager(TestResultHandler):
-    con = None
+    conn = None
+    cur = None
 
     def connect(self):
         """Only implement for db backends with limited connection pools"""
@@ -187,142 +195,165 @@ class DBManager(TestResultHandler):
         """Only implement for db backends with limited connection pools"""
         pass
 
-    def insert_testcases(self, cur, testcases):
+    def insert_testcases(self, testcases):
+        """Bulk inserts testcase data and commits"""
         tcds = map(lambda t: t.db_tc_dict(), testcases)
-        self.insert_ignore_many(cur, TestCase._table, tcds)
+        self.insert_ignore_many("test_cases", tcds)
 
-    def create_job(self, cur, job):
-        self.insert_object(cur, job)
+    def create_job(self, job):
+        self.insert_object(job)
 
-    def create_batch(self, cur, batch):
-        self.insert_object(cur, batch)
+    def create_batch(self, batch):
+        self.insert_object(batch)
 
     def start_batch(self, batch):
-        with self.conn.cursor() as cur:
-            self.update_object(cur, batch)
-        self.commit()
+        self.update_object(batch)
+        self.conn.commit()
         self.disconnect()
 
     def finish_batch(self, batch):
         self.connect()
-        with self.conn.cursor() as cur:
-            self.update_object(cur, batch)
-            self.update_objects(cur, batch.get_finished_testcases())
-        self.commit()
+        self.update_object(batch)
+        self.update_objects(batch.get_finished_testcases())
+        self.conn.commit()
 
     # Helper functions
     def build_fields(self, fields):
         """
         Builds a field list pattern to substitute into a SQL statement, eg:
-        ["a","b","c"] ==> [ "a,b,c", ":a,:b,:c" ]
+        ["a","b","c"] ==> [ "(a,b,c)", "(:a,:b,:c)" ]
         """
         key_pairs = map(lambda k: (k, self.subst_pattern(k)), fields)
-        key_lists = zip(key_pairs)
-        return map(",".join, key_lists)
+        key_lists = zip(*key_pairs)
+        key_strings = map(", ".join, key_lists)
+        return key_strings
 
-    def insert(self, cur, table, dic):
+    def insert(self, table, dic):
         """Retrieval of inserted id is implementation-specific"""
         raise NotImplementedError
 
-    def insert_many(self, cur, table, coll):
-        (fnames, fsubst) = build_fields(coll[0].keys())
+    def insert_many(self, table, coll):
+        (fnames, fsubst) = self.build_fields(coll[0].keys())
         sql = ("INSERT INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
-        cur.executemany(sql, coll)
+        self.cur.executemany(sql, coll)
 
-    def insert_ignore_many(self, cur, table, dic):
+    def insert_ignore_many(self, table, coll):
         """Insert or ignore row with colliding ID and commits"""
         raise NotImplementedError
 
-    def insert_object(self, cur, obj):
+    def insert_object(self, obj):
         if not obj._table:
             raise Exception("Object not suitable for database insertion")
         else:
-            obj._dbid = self.insert(cur, obj._table, obj.db_dict())
+            obj._dbid = self.insert(obj._table, obj.db_dict())
 
-    def update(self, cur, table, dic):
+    def update(self, table, dic):
         if "id" not in dic:
             raise Exception("Needs id field")
-        self.update_many(cur, table, [dic])
+        self.update_many(table, [dic])
 
-    def update_many(self, cur, table, coll):
+    def update_many(self, table, coll):
         """Expects dbid to be set on all dicts being passed in for updating"""
-        (fnames, fsubst) = build_fields(coll[0].keys())
+        (fnames, fsubst) = self.build_fields(coll[0].keys())
         sql = ("UPDATE %s SET (%s) = (%s) WHERE id = %s" % (table, fnames, fsubst, self.subst_pattern("id")))
-        cur.executemany(sql, coll)
+        self.cur.executemany(sql, coll)
 
-    def update_object(self, cur, obj):
+    def update_object(self, obj):
         if not obj._table:
             raise Exception("Object not suitable for database insertion")
         else:
-            self.update(cur, obj._table, obj.db_dict())
+            self.update(obj._table, obj.db_dict())
 
-    def update_objects(self, cur, objs):
+    def update_objects(self, objs):
         """Assumes all objects passed in are of same class"""
         table = objs[0]._table
         dicts = map(lambda o: o.db_dict(), objs)
-        self.update_many(self, cur, table, dicts)
+        self.update_many(self, table, dicts)
+
+    def import_schema(self):
+        with open(DB_SCHEMA_LOCATION, 'r') as f:
+            sql = f.read()
+        sql = self.prepare_schema(sql)
+        self.cur.execute(sql)
+        self.conn.commit()
+
+    def prepare_schema(self, sql):
+        return sql
 
 class SQLiteDBManager(DBManager):
-    def __init__(self):
-        if not os.path.isfile(args.dbpath):
-            print args.dbpath
-            print """ You need to set up your personal results database before saving data to it.
-            See the README for details. """
-            exit(1)
-        self.con = db.connect(args.dbpath)
+    def __init__(self, path):
+        if not os.path.isfile(path):
+            raise Exception("""%s: You need to set up your personal results database before saving data to it.
+            See the README for details.""" % path)
+        self.conn = db.connect(path)
+        self.cur = self.conn.cursor()
 
     def subst_pattern(self, field):
         return (":%s" % field)
 
-    def insert(self, cur, table, dic):
-        (fnames, fsubst) = build_fields(dic.keys())
+    def insert(self, table, dic):
+        (fnames, fsubst) = self.build_fields(dic.keys())
         sql = ("INSERT INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
-        cur.execute(sql, dic)
-        return cur.lastrowid
+        self.cur.execute(sql, dic)
+        return self.cur.lastrowid
 
-    def insert_ignore_many(self, cur, table, coll):
+    def insert_ignore_many(self, table, coll):
         """Insert or ignore rows with colliding ID and commits"""
-        (fnames, fsubst) = build_fields(coll[0].keys())
+        (fnames, fsubst) = self.build_fields(coll[0].keys())
         sql = ("INSERT OR IGNORE INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
-        cur.executemany(sql, dic)
+        self.cur.executemany(sql, coll)
         self.conn.commit()
 
 class PostgresDBManager(DBManager):
     connstr = ""
     schema = ""
 
-    def __init__(self, connstr, schema="jscert"):
+    def __init__(self, connstr, schema=""):
         self.connstr = connstr
         self.schema = schema
 
     def connect(self):
         if not self.conn or self.conn.closed:
-            self.conn = pyscopg2.connect(self.connstr)
-            with self.conn.cursor() as cur:
-                cur.execute("SET SCHEMA %s", self.schema)
-            self.conn.commit()
+            self.conn = psycopg2.connect(self.connstr)
+            self.cur = self.conn.cursor()
+            if self.schema:
+                self.cur.execute("SET SCHEMA %s", (self.schema,))
+                self.conn.commit()
 
     def disconnect(self):
+        self.cur.close()
+        self.cur = None
         self.conn.close()
 
     def subst_pattern(self, field):
         return ("%%(%s)s" % field)
 
-    def insert(self, cur, table, dic):
-        (fnames, fsubst) = build_fields(dic.keys())
+    def insert(self, table, dic):
+        (fnames, fsubst) = self.build_fields(dic.keys())
         sql = ("INSERT INTO %s (%s) VALUES (%s) RETURNING id" % (table, fnames, fsubst))
-        cur.execute(sql, dic)
-        return cur.fetchone()[0]
+        self.cur.execute(sql, dic)
+        return self.cur.fetchone()[0]
 
-    def insert_ignore_many(self, cur, table, coll):
+    def insert_ignore_many(self, table, coll):
         """Insert or ignore rows with colliding ID, and commits"""
-        (fnames, fsubst) = build_fields[0].keys()
+        (fnames, fsubst) = self.build_fields(coll[0].keys())
         sql = ("INSERT INTO %s (%s) SELECT %s WHERE NOT EXISTS (SELECT 1 FROM %s WHERE id = %s)" %
                (table, fnames, fsubst, table, self.subst_pattern("id")))
 
-        cur.execute("LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE" % table)
-        cur.executemany(sql, coll)
+        self.cur.execute("LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE" % table)
+        print sql
+        self.cur.executemany(sql, coll)
         self.conn.commit()
+
+    def prepare_schema(self, sql):
+        if self.schema:
+            try:
+                self.cur.execute("CREATE SCHEMA %s" % (self.schema,))
+            except psycopg2.ProgrammingError as e:
+                raise Exception("Could not create schema: %s" % (e,))
+        sql = re.sub(r"/\*\*\* POSTGRES ONLY \*\*\* (.*) \*\*\*/", r"\1", sql)
+        sql = re.sub(r"(.*)integer(.*) autoincrement", r"\1serial\2", sql)
+        return sql
 
 class CLIResultPrinter(TestResultHandler):
     # Some pretty colours for our output messages.
@@ -448,6 +479,7 @@ class Interpreter:
     fail_code = 1
     path = ""
     version = "Version unknown"
+    arg_name = "generic"
 
     PASS = 0
     FAIL = 1
@@ -455,6 +487,9 @@ class Interpreter:
 
     def __init__(self, version=""):
         self.set_version(version)
+
+    def __str__(self):
+        return self.arg_name
 
     def get_name(self):
         return os.path.basename(self.path)
@@ -519,18 +554,21 @@ class Interpreter:
 
 class Spidermonkey(Interpreter):
     fail_code = 3
+    arg_name = "spidermonkey"
 
     def get_name(self):
         return "SpiderMonkey"
 
 class NodeJS(Interpreter):
     path = "/usr/bin/nodejs"
+    arg_name = "node"
 
     def get_name(self):
         return "node.js"
 
 class LambdaS5(Interpreter):
     current_dir = ""
+    arg_name = "lambdas5"
 
     def get_name(self):
         return "LambdaS5"
@@ -549,8 +587,9 @@ class LambdaS5(Interpreter):
 class JSRef(Interpreter):
     interp_dir = os.path.join(JSCERT_ROOT_DIR,"interp")
     path = os.path.join(interp_dir,"run_js")
-    jsonparser = False
+    arg_name = "jsref"
     no_parasite = False
+    jsonparser = False
 
     def __init__(self, no_parasite=False, jsonparser=False):
         self.no_parasite = no_parasite
@@ -690,7 +729,7 @@ class TestBatch(Timer):
 
     def __init__(self, job):
         (sysname, nodename, release, version, machine) = os.uname()
-        self.pending_tests = dequeue()
+        self.pending_tests = deque()
         self.passed_tests = []
         self.failed_tests = []
         self.aborted_tests = []
@@ -759,36 +798,35 @@ class Runtests:
 
     interrupted = False
 
-    def __init__(self,interpreter):
+    def __init__(self,):
         self.handlers = []
-        self.interpreter = interpreter
 
-    def add_result_handler(self,handler):
+    def add_result_handler(self, handler):
         self.handlers.append(handler)
 
-    def get_testcases_from_paths(self, paths, testcases=[]):
+    def get_testcases_from_paths(self, paths, testcases=[], lazy=True):
         return reduce(
-            lambda ts, p: self.get_testcases_from_path(p, ts),
+            lambda ts, p: self.get_testcases_from_path(p, ts, lazy),
             paths, [])
 
-    def get_testcases_from_path(self, path, testcases=[]):
+    def get_testcases_from_path(self, path, testcases=[], lazy=True):
         if not os.path.exists(path):
             raise IOError("No such file or directory: %s" % path)
 
         if os.path.isdir(path):
-            return self.get_testcases_from_dir(path, testcases)
+            return self.get_testcases_from_dir(path, testcases, lazy)
         else:
-            testcases.append(TestCase(path))
+            testcases.append(TestCase(path, lazy))
             return testcases
 
-    def get_testcases_from_dir(self, dirname, testcases=[]):
+    def get_testcases_from_dir(self, dirname, testcases=[], lazy=True):
         """Recusively walk the given directory looking for .js files, does not traverse symbolic links"""
         dirname = os.path.realpath(dirname)
         for r,d,f in os.walk(dirname):
             for filename in f:
                 filename = os.path.join(r,filename)
                 if os.path.isfile(filename) and filename.endswith(".js"):
-                    testcases.append(TestCase(filename, is_absolute=True))
+                    testcases.append(TestCase(filename, lazy))
         return testcases
 
 
@@ -819,11 +857,10 @@ class Runtests:
         for handler in self.handlers:
             handler.end_batch(batch)
 
-    def submit_condor(self):
+    def submit_condor(self, job, test_batches):
         import htcondor
         import classad
 
-        test_batches = self.batch_tests(tests, num_per_batch)
         n = len(test_batches)
 
         c = classad.ClassAd()
@@ -831,19 +868,15 @@ class Runtests:
         c['ShouldTransferFiles'] = 'IF_NEEDED'
         c['Owner'] = job.user
         c['Cmd'] = __file__
-        c['Arguments'] = "--condor_run --runid= --procid= $$([tests[ProcId]])"
+        c['Iwd'] = os.getcwd()
+        c['Arguments'] = "--condor_run --id=$$([ProcId]) --procid= $$([tests[ProcId]])"
+        # Pass through current environment
+        c['Environment'] = " ".join(map(lambda it: "%s='%s'" % it, os.envion.iteritems()))
 
         c['tests'] = map(" ".join, test_batches)
 
         sched = htcondor.Schedd()
         cluster_id = sched.submit(c, n)
-
-    def batch_tests(self, tests, num):
-        """[a, b, c, d...] -> [[a,b], [c,d]...]"""
-        l = [[]]
-        for t in tests:
-            l[-1].append(t) if len(l[-1] < num) else l.append([t])
-        return l
 
     def interrupt_handler(self,signal,frame):
         if self.interrupted:
@@ -865,25 +898,24 @@ def main():
     argp.add_argument("filenames", metavar="path", nargs="+",
         help="The test file or directory we want to run. Directory names will recusively run all .js files.")
 
-    argp.add_argument("--interp_path", action="store", metavar="path", default="",
-        help="Where to find the interpreter.")
+    interp_grp = argp.add_argument_group(title="Interpreter options")
+    jsr = JSRef()
+    interp_grp.add_argument("--interp", action="store", dest="interpreter", choices=[jsr, Spidermonkey(), LambdaS5(), NodeJS(), Interpreter()], default=jsr, help="Interpreter type (default: jsref)")
 
-    argp.add_argument("--interp_version", action="store", metavar="version", default="",
-        help="The version of the interpreter you're running. Default is the git hash of the current directory.")
+    interp_grp.add_argument("--interp_path", action="store", metavar="path", default="",
+                      help="Where to find the interpreter (a sensible default may be provided for some types)")
 
-    argp.add_argument("--jsonparser", action="store_true",
+    interp_grp.add_argument("--interp_version", action="store", metavar="version", default="",
+        help="The version of the interpreter you're running. (Default is type-specific, usually by executing the --version flag of the interpeter)")
+
+    interp_grp.add_argument("--jsonparser", action="store_true",
         help="Use the JSON parser (Esprima) when running tests.")
 
-    engines_grp = argp.add_argument_group(title="Alternative JS Engine Selection",description="All of these options probably should also have --interp_path set. Some some system defaults may be attempted.")
-    engines_ex_grp = engines_grp.add_mutually_exclusive_group()
-    engines_ex_grp.add_argument("--spidermonkey", action="store", dest="interpreter", const=Spidermonkey(),
-        help="Test SpiderMonkey instead of JSRef. If you use this, you should probably also use --interp_path")
+    interp_grp.add_argument("--no_parasite",action="store_true",
+        help="Run JSRef with -no-parasite flag (the options --debug and --verbose might be useless in this mode).")
 
-    engines_ex_grp.add_argument("--lambdaS5", action="store", dest="interpreter", const=LambdaS5(),
-        help="Test LambdaS5 instead of JSRef. If you use this, you should probably also use --interp_path")
-
-    engines_ex_grp.add_argument("--nodejs", action="store", dest="interpreter", const=NodeJS(),
-        help="Test node.js instead of JSRef. If you use this, you should probably also use --interp_path")
+    interp_grp.add_argument("--debug",action="store_true",
+        help="Run JSRef with debugging flags (-print-heap -verbose -skip-init).")
 
     report_grp = argp.add_argument_group(title="Report Options")
     report_grp.add_argument("--webreport",action="store_true",
@@ -907,23 +939,20 @@ def main():
     argp.add_argument("--verbose",action="store_true",
         help="Print the output of the tests as they happen.")
 
-    argp.add_argument("--debug",action="store_true",
-        help="Run the interpreter with debugging flags (-print-heap -verbose -skip-init).")
 
-    argp.add_argument("--no_parasite",action="store_true",
-        help="Run the interpreter with -no-parasite flag (the options --debug and --verbose might be useless in this mode).")
-
+    # Database config
     db_args = argp.add_argument_group(title="Database options")
-
-    db_args.add_argument("--dbsave",action="store_true",
+    db_args.add_argument("--db", action="store", choices=['sqlite', 'postgres'],
         help="Save the results of this testrun to the database")
 
-    db_args.add_argument("--dbpath",action="store",metavar="path",
-        default="test_data/test_results.db",
-        help="Path to the database to save results in. The default should usually be fine. Please don't mess with this unless you know what you're doing.")
+    db_args.add_argument("--dbpath", action="store", default="test_data/test_results.db",
+        help="Path to the database (for SQLite) or configuration file (for Postgres).")
 
-    db_args.add_argument("--psqlconfig",action="store",metavar="psqlconfig",default="",
-        help="Use PostgreSQL backed database, give path to file containing libpq connection string")
+    db_args.add_argument("--db-init", action="store_true",
+        help="Create the database and load schema")
+
+    db_args.add_argument("--db-pg-schema", action="store", default="jscert",
+        help="Schema of Postgres database to use. (Defaults to 'jscert')")
 
 
     # Condor infos
@@ -947,11 +976,37 @@ def main():
     VERBOSE = args.verbose
     DEBUG = args.debug
 
-
-    exit(0)
-
     runtests = Runtests()
 
+    t = Timer()
+    t.start_timer()
+    # How to save results
+    if args.db:
+        if args.db == "sqlite":
+            dbmanager = SQLiteDBManager(args.dbpath)
+        elif args.db == "postgres":
+            try:
+                with open(args.dbpath, "r") as f:
+                    dbmanager = PostgresDBManager(f.readline(), args.db_pg_schema)
+            except Exception as e:
+                raise Exception("Could not open postgres configuration: %s" % e)
+
+        if args.db_init:
+            dbmanager.connect()
+            dbmanager.import_schema()
+            print "Database created successfully"
+            exit(0)
+    else:
+        dbmanager = None
+
+
+
+    testcases = runtests.get_testcases_from_paths(args.filenames, lazy=False)
+    if args.db and not args.condor_run:
+        print "Preloading test-cases into database...",
+        dbmanager.connect()
+        dbmanager.insert_testcases(testcases) # auto-commits
+        print " Done!"
 
     # Interpreter to use
     interpreter = JSRef(no_parasite=args.no_parasite, jsonparser=args.jsonparser)
@@ -961,15 +1016,7 @@ def main():
 
     job = Job(args.title, args.note, interpreter)
 
-    # Tests to run
-    for filename in args.filenames:
-        job.add_path(filename)
 
-    # How to save results
-    if(args.dbsave):
-        dbmanager = SQLiteDBManager()
-    elif(args.psqlconfig):
-        dbmanager = PgDBManager()
 
     runtests.add_handler(CLIResultPrinter())
 
