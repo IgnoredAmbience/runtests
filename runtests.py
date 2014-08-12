@@ -66,7 +66,7 @@ class TestCase(Timer):
     stdout = ""
     stderr = ""
 
-    def __init__(self, filename, lazy=True):
+    def __init__(self, filename, lazy=False):
         self.filename = os.path.relpath(filename, JSCERT_ROOT_DIR)
         if not lazy:
             self.fetch_file_info()
@@ -186,6 +186,7 @@ class TestResultHandler:
 class DBManager(TestResultHandler):
     conn = None
     cur = None
+    wait_for_batch = False
 
     def connect(self):
         """Only implement for db backends with limited connection pools"""
@@ -200,22 +201,35 @@ class DBManager(TestResultHandler):
         tcds = map(lambda t: t.db_tc_dict(), testcases)
         self.insert_ignore_many("test_cases", tcds)
 
-    def create_job(self, job):
+    def create_job_batches_runs(self, job):
         self.insert_object(job)
-
-    def create_batch(self, batch):
-        self.insert_object(batch)
+        for batch in job.get_batches():
+            self.insert_object(batch)
+            for test in batch.get_testcases():
+                self.insert_object(test)
 
     def start_batch(self, batch):
+        self.connect()
         self.update_object(batch)
         self.conn.commit()
-        self.disconnect()
+        if not self.wait_for_batch:
+            self.disconnect()
+
+    def start_test(self, testcase):
+        pass
+
+    def finish_test(self, testcase):
+        if not self.wait_for_batch:
+            self.update_object(testcase)
+            self.conn.commit()
 
     def finish_batch(self, batch):
         self.connect()
+        if self.wait_for_batch:
+            self.update_objects(batch.get_finished_testcases())
         self.update_object(batch)
-        self.update_objects(batch.get_finished_testcases())
         self.conn.commit()
+        self.disconnect()
 
     # Helper functions
     def build_fields(self, fields):
@@ -485,9 +499,6 @@ class Interpreter:
     FAIL = 1
     ABORT = 2
 
-    def __init__(self, version=""):
-        self.set_version(version)
-
     def __str__(self):
         return self.arg_name
 
@@ -511,8 +522,7 @@ class Interpreter:
         else:
             return "Unknown version"
 
-    # Intereter "lifecycle" follows
-    def set_path(self,path):
+    def set_path(self, path):
         if path:
             self.path = path
 
@@ -663,6 +673,10 @@ class Job:
     condor_cluster = 0
     condor_scheduler = ""
 
+    """
+    batch_size of 0 indicates a single batch containing all tests
+    n>0 produces batches of size n
+    """
     batch_size = 0
     batches = None
 
@@ -682,6 +696,9 @@ class Job:
 
     def new_batch(self):
         self.batches.append(TestBatch(self))
+
+    def get_batches(self):
+        return self.batches
 
     def add_testcase(self, testcase):
         if self.batch_size and len(self.batches[-1]) >= self.batch_size:
@@ -728,7 +745,6 @@ class TestBatch(Timer):
     aborted_tests = None
 
     def __init__(self, job):
-        (sysname, nodename, release, version, machine) = os.uname()
         self.pending_tests = deque()
         self.passed_tests = []
         self.failed_tests = []
@@ -740,14 +756,23 @@ class TestBatch(Timer):
     def add_testcase(self, testcase):
         self.pending_tests.append(testcase)
 
+    def add_testcases(self, testcases):
+        self.pending_tests.extend(testcases)
+
     def has_testcase(self):
         return len(self.pending_tests) > 0
 
     def get_testcase(self):
         return self.pending_tests.popleft()
 
+    def get_testcases(self):
+        return self.pending_tests
+
     def get_finished_testcases(self):
         return self.passed_tests + self.failed_tests + self.aborted_tests
+
+    def set_machine_details(self):
+        (self.sysname, self.nodename, self.release, self.version, self.machine) = os.uname()
 
     def test_finished(self, testcase):
         if testcase.passed():
@@ -804,39 +829,39 @@ class Runtests:
     def add_result_handler(self, handler):
         self.handlers.append(handler)
 
-    def get_testcases_from_paths(self, paths, testcases=[], lazy=True):
+    def get_testcases_from_paths(self, paths, testcases=[], factory=TestCase):
         return reduce(
-            lambda ts, p: self.get_testcases_from_path(p, ts, lazy),
+            lambda ts, p: self.get_testcases_from_path(p, ts, factory),
             paths, [])
 
-    def get_testcases_from_path(self, path, testcases=[], lazy=True):
+    def get_testcases_from_path(self, path, testcases=[], factory=TestCase):
         if not os.path.exists(path):
             raise IOError("No such file or directory: %s" % path)
 
         if os.path.isdir(path):
-            return self.get_testcases_from_dir(path, testcases, lazy)
+            return self.get_testcases_from_dir(path, testcases, factory)
         else:
-            testcases.append(TestCase(path, lazy))
+            testcases.append(factory(path))
             return testcases
 
-    def get_testcases_from_dir(self, dirname, testcases=[], lazy=True):
+    def get_testcases_from_dir(self, dirname, testcases=[], factory=TestCase):
         """Recusively walk the given directory looking for .js files, does not traverse symbolic links"""
         dirname = os.path.realpath(dirname)
         for r,d,f in os.walk(dirname):
             for filename in f:
                 filename = os.path.join(r,filename)
                 if os.path.isfile(filename) and filename.endswith(".js"):
-                    testcases.append(TestCase(filename, lazy))
+                    testcases.append(factory(filename))
         return testcases
 
-
     def run(self, batch):
-        # Now let's get down to the business of running the tests
+        batch.set_machine_details()
+        batch.start_timer()
+
         for handler in self.handlers:
             handler.start_batch(batch)
 
-        batch.start_timer()
-
+        # Now let's get down to the business of running the tests
         while batch.has_testcase():
             testcase = batch.get_testcase()
             for handler in self.handlers:
@@ -857,26 +882,71 @@ class Runtests:
         for handler in self.handlers:
             handler.end_batch(batch)
 
-    def submit_condor(self, job, test_batches):
+    def condor_submit(self, job, initial_args):
         import htcondor
         import classad
 
-        n = len(test_batches)
+        batches = job.get_batches()
+        n = len(batches)
+
+        batch_ids = map(lambda b: b._dbid, batches)
+        batch_tcs = map(lambda b: b.get_testcases(), batches)
+        tc_paths = map(lambda tcs: " ".join(map(lambda t: t.get_relpath(), tcs)), batch_tcs)
+        tc_ids = map(lambda tcs: ",".join(map(lambda t: t._dbid, tcs)), batch_tcs)
 
         c = classad.ClassAd()
+        # Custom attributes
+        c['tests'] = tc_paths
+        c['batchids'] = batch_ids
+        c['testids'] = tc_ids
+
+        # Standard job attributes
         c['AccountingGroup'] = 'jscert.' + job.user
         c['ShouldTransferFiles'] = 'IF_NEEDED'
         c['Owner'] = job.user
         c['Cmd'] = __file__
         c['Iwd'] = os.getcwd()
-        c['Arguments'] = "--condor_run --id=$$([ProcId]) --procid= $$([tests[ProcId]])"
-        # Pass through current environment
-        c['Environment'] = " ".join(map(lambda it: "%s='%s'" % it, os.envion.iteritems()))
 
-        c['tests'] = map(" ".join, test_batches)
+        # Build argument string
+        args_to_copy = ["db", "dbpath", "db_pg_schema", "interp", "interp_path",
+                        "interp_version", "no_parasite", "debug", "verbose"]
+
+        arguments = ["--condor_run"]
+        initial_args = vars(initial_args)
+        for (arg, val) in initial_args.iteritems():
+            if arg in args_to_copy:
+                arguments.append("--%s" % arg)
+                arguments.append(val)
+        arguments.append("$$([tests[ProcId]])")
+
+        c['Arguments'] = ' '.join(arguments)
+
+        # Build the environment
+        env = dict(os.environ)
+        env['_RUNTESTS_PROCID'] = "$$([ProcId])"
+        env['_RUNTESTS_JOBID'] = job._dbid
+        env['_RUNTESTS_BATCHID'] = "$$([batchids[ProcId]])"
+        env['_RUNTESTS_TESTIDS'] = "$$([testids[ProcId]])"
+        c['Environment'] = " ".join(map(lambda it: "%s='%s'" % it, env.iteritems()))
 
         sched = htcondor.Schedd()
         cluster_id = sched.submit(c, n)
+
+        job.condor_scheduler = htcondor.Collector().locate(htcondor.DaemonTypes.Schedd)['Machine']
+        job.condor_cluster = cluster_id
+
+        return n
+
+    def condor_update_job(self, job, dbmanager):
+        job._dbid = int(os.environ['_RUNTESTS_JOBID'])
+        batch = job.batches[0]
+        batch._dbid = int(os.environ['_RUNTESTS_BATCHID'])
+        batch.condor_proc = int(os.environ['_RUNTESTS_PROCID'])
+
+        tc_ids = os.environ['_RUNTESTS_TESTIDS'].split(",")
+        tcs = batch.get_testcases()
+        for (tc, tc_id) in zip(tcs, tc_ids):
+            tc._dbid = tc_id
 
     def interrupt_handler(self,signal,frame):
         if self.interrupted:
@@ -890,143 +960,178 @@ class Runtests:
             handler.interrupt_handler(signal,frame)
         exit(1)
 
-def main():
-    # Our command-line interface
-    argp = argparse.ArgumentParser(
-        description="Run some Test262-style tests with some JS implementation: by default, with JSRef.")
+    def build_arg_parser(self):
+        # Our command-line interface
+        argp = argparse.ArgumentParser(
+            description="Run some Test262-style tests with some JS implementation: by default, with JSRef.")
 
-    argp.add_argument("filenames", metavar="path", nargs="+",
-        help="The test file or directory we want to run. Directory names will recusively run all .js files.")
+        argp.add_argument("filenames", metavar="path", nargs="+",
+            help="The test file or directory we want to run. Directory names will recusively run all .js files.")
 
-    interp_grp = argp.add_argument_group(title="Interpreter options")
-    jsr = JSRef()
-    interp_grp.add_argument("--interp", action="store", dest="interpreter", choices=[jsr, Spidermonkey(), LambdaS5(), NodeJS(), Interpreter()], default=jsr, help="Interpreter type (default: jsref)")
+        argp.add_argument("--title", action="store", metavar="string", default="",
+            help="Optional title for this test. Will be used in the report filename, so no spaces please!")
 
-    interp_grp.add_argument("--interp_path", action="store", metavar="path", default="",
-                      help="Where to find the interpreter (a sensible default may be provided for some types)")
+        argp.add_argument("--note", action="store", metavar="string", default="",
+            help="Optional explanatory note to be added to the test report.")
 
-    interp_grp.add_argument("--interp_version", action="store", metavar="version", default="",
-        help="The version of the interpreter you're running. (Default is type-specific, usually by executing the --version flag of the interpeter)")
+        interp_grp = argp.add_argument_group(title="Interpreter options")
+        jsr = JSRef()
+        interp_grp.add_argument("--interp", action="store", choices=[jsr, Spidermonkey(), LambdaS5(), NodeJS(), Interpreter()], default=jsr, help="Interpreter type (default: jsref)")
 
-    interp_grp.add_argument("--jsonparser", action="store_true",
-        help="Use the JSON parser (Esprima) when running tests.")
+        interp_grp.add_argument("--interp_path", action="store", metavar="path", default="",
+                          help="Where to find the interpreter (a sensible default may be provided for some types)")
 
-    interp_grp.add_argument("--no_parasite",action="store_true",
-        help="Run JSRef with -no-parasite flag (the options --debug and --verbose might be useless in this mode).")
+        interp_grp.add_argument("--interp_version", action="store", metavar="version", default="",
+            help="The version of the interpreter you're running. (Default is type-specific, usually by executing the --version flag of the interpeter)")
 
-    interp_grp.add_argument("--debug",action="store_true",
-        help="Run JSRef with debugging flags (-print-heap -verbose -skip-init).")
+        interp_grp.add_argument("--jsonparser", action="store_true",
+            help="Use the JSON parser (Esprima) when running tests.")
 
-    report_grp = argp.add_argument_group(title="Report Options")
-    report_grp.add_argument("--webreport",action="store_true",
-        help="Produce a web-page of your results in the default web directory. Requires pystache.")
+        interp_grp.add_argument("--no_parasite",action="store_true",
+            help="Run JSRef with -no-parasite flag (the options --debug and --verbose might be useless in this mode).")
 
-    report_grp.add_argument("--templatedir",action="store",metavar="path", default=os.path.join("test_reports"),
-        help="Where to find our web-templates when producing reports")
+        interp_grp.add_argument("--debug",action="store_true",
+            help="Run JSRef with debugging flags (-print-heap -verbose -skip-init).")
 
-    report_grp.add_argument("--reportdir",action="store",metavar="path",default=os.path.join("test_reports"),
-        help="Where to put our test reports")
+        report_grp = argp.add_argument_group(title="Report Options")
+        report_grp.add_argument("--webreport",action="store_true",
+            help="Produce a web-page of your results in the default web directory. Requires pystache.")
 
-    report_grp.add_argument("--title",action="store",metavar="string", default="",
-        help="Optional title for this test. Will be used in the report filename, so no spaces please!")
+        report_grp.add_argument("--templatedir",action="store",metavar="path", default=os.path.join("test_reports"),
+            help="Where to find our web-templates when producing reports")
 
-    report_grp.add_argument("--note",action="store",metavar="string", default="",
-        help="Optional explanatory note to be added to the test report.")
+        report_grp.add_argument("--reportdir",action="store",metavar="path",default=os.path.join("test_reports"),
+            help="Where to put our test reports")
 
-    report_grp.add_argument("--noindex",action="store_true",
-        help="Don't attempt to build an index.html for the reportdir")
+        report_grp.add_argument("--noindex",action="store_true",
+            help="Don't attempt to build an index.html for the reportdir")
 
-    argp.add_argument("--verbose",action="store_true",
-        help="Print the output of the tests as they happen.")
-
-
-    # Database config
-    db_args = argp.add_argument_group(title="Database options")
-    db_args.add_argument("--db", action="store", choices=['sqlite', 'postgres'],
-        help="Save the results of this testrun to the database")
-
-    db_args.add_argument("--dbpath", action="store", default="test_data/test_results.db",
-        help="Path to the database (for SQLite) or configuration file (for Postgres).")
-
-    db_args.add_argument("--db-init", action="store_true",
-        help="Create the database and load schema")
-
-    db_args.add_argument("--db-pg-schema", action="store", default="jscert",
-        help="Schema of Postgres database to use. (Defaults to 'jscert')")
+        argp.add_argument("--verbose",action="store_true",
+            help="Print the output of the tests as they happen.")
 
 
-    # Condor infos
-    condor_args = argp.add_argument_group(title="Condor Options")
-    condor_args.add_argument("--condor", action="store_true",
-        help="Schedule these testcases on the Condor distributed computing cluster, requires --psqlconfig")
+        # Database config
+        db_args = argp.add_argument_group(title="Database options")
+        db_args.add_argument("--db", action="store", choices=['sqlite', 'postgres'],
+            help="Save the results of this testrun to the database")
 
-    condor_args.add_argument("--condor_run", action="store_true",
-        help="(Internal) Run scheduled Condor testcases (for individual jobs)")
+        db_args.add_argument("--dbpath", action="store", metavar="file", default="test_data/test_results.db",
+            help="Path to the database (for SQLite) or configuration file (for Postgres).")
 
-    condor_args.add_argument("--runid",action="store",metavar="runid",default=0,
-        help="(Internal) Test run ID, to cross reference condor processes and cluster")
+        db_args.add_argument("--db_init", action="store_true",
+            help="Create the database and load schema")
 
-    condor_args.add_argument("--procid",action="store",metavar="condorprocid",default=0,
-        help="(Internal) Process ID for crossreference with Condor logs")
+        db_args.add_argument("--db_pg_schema", action="store", metavar="name", default="jscert",
+            help="Schema of Postgres database to use. (Defaults to 'jscert')")
 
-    args = argp.parse_args()
 
-    global VERBOSE
-    global DEBUG
-    VERBOSE = args.verbose
-    DEBUG = args.debug
+        # Condor infos
+        condor_args = argp.add_argument_group(title="Condor Options")
+        condor_args.add_argument("--condor", action="store_true",
+            help="Schedule these testcases on the Condor distributed computing cluster, requires --psqlconfig")
 
-    runtests = Runtests()
+        condor_args.add_argument("--batch_size", action="store", metavar="n", default=-1,
+            help="Number of testcases to run per Condor batch, if 0 run all tests in a single batch, otherwise run n tests per batch.")
 
-    t = Timer()
-    t.start_timer()
-    # How to save results
-    if args.db:
-        if args.db == "sqlite":
-            dbmanager = SQLiteDBManager(args.dbpath)
-        elif args.db == "postgres":
+        condor_args.add_argument("--condor_run", action="store_true", help=argparse.SUPPRESS)
+
+        return argp
+
+    def main(self):
+        argp = self.build_arg_parser()
+        args = argp.parse_args()
+
+        global VERBOSE
+        global DEBUG
+        VERBOSE = args.verbose
+        DEBUG = args.debug
+
+        if args.condor:
             try:
-                with open(args.dbpath, "r") as f:
-                    dbmanager = PostgresDBManager(f.readline(), args.db_pg_schema)
-            except Exception as e:
-                raise Exception("Could not open postgres configuration: %s" % e)
+                import htcondor
+                import classad
+            except ImportError as e:
+                raise ImportError("Could not load modules required for Condor submit support: %s" % e)
 
-        if args.db_init:
-            dbmanager.connect()
-            dbmanager.import_schema()
-            print "Database created successfully"
-            exit(0)
-    else:
-        dbmanager = None
+        if args.db:
+            if args.db == "sqlite":
+                if args.condor:
+                    raise Exception("Only PostgresSQL may be used in a condor environment")
+                dbmanager = SQLiteDBManager(args.dbpath)
+            elif args.db == "postgres":
+                try:
+                    with open(args.dbpath, "r") as f:
+                        dbmanager = PostgresDBManager(f.readline(), args.db_pg_schema)
+                except Exception as e:
+                    raise Exception("Could not open postgres configuration: %s" % e)
 
+            if args.db_init:
+                dbmanager.connect()
+                dbmanager.import_schema()
+                print "Database created successfully"
+                exit(0)
+        else:
+            dbmanager = None
 
-
-    testcases = runtests.get_testcases_from_paths(args.filenames, lazy=False)
-    if args.db and not args.condor_run:
-        print "Preloading test-cases into database...",
-        dbmanager.connect()
-        dbmanager.insert_testcases(testcases) # auto-commits
-        print " Done!"
-
-    # Interpreter to use
-    interpreter = JSRef(no_parasite=args.no_parasite, jsonparser=args.jsonparser)
-    if interpreter in args:
+        # Interpreter
         interpreter = args.interpreter
-    interpreter.set_path(args.interp_path)
+        if isinstance(interpreter, JSRef):
+            interpreter.no_parasite = args.no_parasite
+            interpreter.jsonparser = args.jsonparser
+        interpreter.set_path(args.interp_path)
+        interpreter.set_version(args.interp_version)
 
-    job = Job(args.title, args.note, interpreter)
+        # Generate testcases
+        testcases = self.get_testcases_from_paths(args.filenames)
+        if dbmanager and not args.condor_run:
+            print "Preloading test-cases into database...",
+            dbmanager.connect()
+            dbmanager.insert_testcases(testcases) # auto-commits
+            print " Done!"
 
+        # Build job
+        job = Job(args.title, args.note, interpreter)
 
+        if args.batch_size < 0:
+            if args.condor:
+                job.batch_size = 1
+            else:
+                job.batch_size = 0
+        else:
+            job.batch_size = args.batch_size
 
-    runtests.add_handler(CLIResultPrinter())
+        job.add_testcases(testcases)
 
-    if (not args.condor) and args.webreport:
-        runtests.add_handler(WebResultPrinter())
+        # Insert it all into the database
+        if not args.condor_run:
+            if dbmanager:
+                dbmanager.create_job_batches_runs(job)
 
-    # What to do if the user hits control-C
-    signal.signal(signal.SIGINT, runtests.interrupt_handler)
+        # Submit job to Condor?
+        if args.condor:
+            n = self.condor_submit(job, args)
+            dbmanager.update_object(job)
+            print ("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
+                (n, job.condor_cluster, job.condor_scheduler, job._dbid))
+            exit(0)
 
-    runtests.run(job)
+        # What other output handlers do we want to configure?
+        self.add_handler(CLIResultPrinter())
+        if args.webreport:
+            self.add_handler(WebResultPrinter(args.templatedir, args.reportdir, args.noindex))
+        # What to do if the user hits control-C
+        signal.signal(signal.SIGINT, self.interrupt_handler)
+
+        # Pick the batch to run
+        batch = None
+        if args.condor_run:
+            dbmanager.wait_for_batch = True
+            batch = self.condor_update_job(job, dbmanager)
+        else:
+            batch = job.batches[0]
+
+        # Let's go!
+        self.run(batch)
 
 if __name__ == "__main__":
-    main()
+    Runtests().main()
