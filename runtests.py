@@ -1015,7 +1015,7 @@ class Runtests:
         db_args.add_argument("--db", action="store", choices=['sqlite', 'postgres'],
             help="Save the results of this testrun to the database")
 
-        db_args.add_argument("--dbpath", action="store", metavar="file", default="test_data/test_results.db",
+        db_args.add_argument("--dbpath", action="store", metavar="file", default="",
             help="Path to the database (for SQLite) or configuration file (for Postgres).")
 
         db_args.add_argument("--db_init", action="store_true",
@@ -1057,8 +1057,15 @@ class Runtests:
             if args.db == "sqlite":
                 if args.condor:
                     raise Exception("Only PostgresSQL may be used in a condor environment")
+
+                if not args.dbpath:
+                    args.dbpath = os.path.join(JSCERT_ROOT_DIR, "test_data", "test_results.db")
+
                 dbmanager = SQLiteDBManager(args.dbpath)
+
             elif args.db == "postgres":
+                if not args.dbpath:
+                    args.dbpath = os.path.join(JSCERT_ROOT_DIR, ".pgconfig")
                 try:
                     with open(args.dbpath, "r") as f:
                         dbmanager = PostgresDBManager(f.readline(), args.db_pg_schema)
