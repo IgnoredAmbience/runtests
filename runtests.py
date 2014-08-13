@@ -25,9 +25,9 @@ VERBOSE=False
 
 # Some handy data structures
 
-class Timer:
-    start_time = None
-    stop_time = None
+class Timer(object):
+    start_time = datetime.min
+    stop_time = datetime.min
 
     def start_timer(self):
         self.start_time = datetime.now()
@@ -41,13 +41,22 @@ class Timer:
     def get_duration(self):
         return self.get_delta().total_seconds()
 
-class TestCase(Timer):
+class DBObject(object):
+    _table = ""
+    _dbid = 0
+
+    def db_dict(self):
+        dic = self._db_dict()
+        if self._dbid:
+            dic['id'] = self._dbid
+        return dic
+
+class TestCase(Timer, DBObject):
     """
     A test case knows what file it came from, whether it has been run and if so,
     whether it passed, failed or aborted, and what output it generated along the way.
     """
     _table = "test_runs"
-    _dbid = 0
 
     # Fake-enum for result
     UNKNOWN = 0
@@ -73,7 +82,7 @@ class TestCase(Timer):
 
     def fetch_file_info(self):
         if self.includes == None:
-            with open(self.filename) as f:
+            with open(self.get_realpath()) as f:
                 # If this was a sputnik test, it may have expected to fail.
                 # If so, we will need to invert the return value later on.
                 buf = f.read()
@@ -119,9 +128,11 @@ class TestCase(Timer):
         return self.result == self.ABORT
 
     def get_relpath(self):
+        """Returns path of test relative to JSCert project repo root directory"""
         return self.filename
 
     def get_realpath(self):
+        """Returns the real/absolute path to the test"""
         return os.path.join(JSCERT_ROOT_DIR, self.filename)
 
     def report_dict(self):
@@ -130,14 +141,13 @@ class TestCase(Timer):
                 "stdout": self.stdout,
                 "stderr": self.stderr}
 
-    def db_dict(self):
-        return {"id": self._dbid,
-                "test_id": self.get_relpath(),
+    def _db_dict(self):
+        return {"test_id": self.get_relpath(),
                 "result": self.get_result_text(),
                 "exit_code": self.exit_code,
                 "stdout": self.stdout,
                 "stderr": self.stderr,
-                "duration": self.get_duation()}
+                "duration": self.get_duration()}
 
     def db_tc_dict(self):
         return {"id": self.get_relpath(),
@@ -154,6 +164,12 @@ class TestCase(Timer):
     # Does this test try to load other libraries?
     def usesInclude(self):
         return len(self.get_includes()) > 0
+
+    def isLambdaS5Test(self):
+        return self.get_relpath().startswith("tests/LambdaS5/unit-tests/")
+
+    def isSpiderMonkeyTest(self):
+        return self.get_relpath().startswith("tests/SpiderMonkey/")
 
 class TestResultHandler:
     """
@@ -232,22 +248,30 @@ class DBManager(TestResultHandler):
         self.disconnect()
 
     # Helper functions
-    def build_fields(self, fields):
+    def build_fields_insert(self, fields):
         """
         Builds a field list pattern to substitute into a SQL statement, eg:
-        ["a","b","c"] ==> [ "(a,b,c)", "(:a,:b,:c)" ]
+        ["a","b","c"] ==> [ "a, b, c", ":a, :b, :c" ]
         """
         key_pairs = map(lambda k: (k, self.subst_pattern(k)), fields)
         key_lists = zip(*key_pairs)
         key_strings = map(", ".join, key_lists)
         return key_strings
 
+    def build_fields_update(self, fields):
+        """
+        Builds a field list pattern to substitute into a SQL statement, eg:
+        ["a","b","c"] ==> [ "a = :a, b = :b, c = :c" ]
+        """
+        assigns = map(lambda k: "%s = %s" % (k, self.subst_pattern(k)), fields)
+        return ", ".join(assigns)
+
     def insert(self, table, dic):
         """Retrieval of inserted id is implementation-specific"""
         raise NotImplementedError
 
     def insert_many(self, table, coll):
-        (fnames, fsubst) = self.build_fields(coll[0].keys())
+        (fnames, fsubst) = self.build_fields_insert(coll[0].keys())
         sql = ("INSERT INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
         self.cur.executemany(sql, coll)
 
@@ -268,8 +292,8 @@ class DBManager(TestResultHandler):
 
     def update_many(self, table, coll):
         """Expects dbid to be set on all dicts being passed in for updating"""
-        (fnames, fsubst) = self.build_fields(coll[0].keys())
-        sql = ("UPDATE %s SET (%s) = (%s) WHERE id = %s" % (table, fnames, fsubst, self.subst_pattern("id")))
+        assigns = self.build_fields_update(coll[0].keys())
+        sql = ("UPDATE %s SET %s WHERE id = %s" % (table, assigns, self.subst_pattern("id")))
         self.cur.executemany(sql, coll)
 
     def update_object(self, obj):
@@ -288,17 +312,19 @@ class DBManager(TestResultHandler):
         with open(DB_SCHEMA_LOCATION, 'r') as f:
             sql = f.read()
         sql = self.prepare_schema(sql)
-        self.cur.execute(sql)
+        self.execute_script(sql)
         self.conn.commit()
+
+    def execute_script(self, sql):
+        self.cur.execute(sql)
 
     def prepare_schema(self, sql):
         return sql
 
 class SQLiteDBManager(DBManager):
-    def __init__(self, path):
-        if not os.path.isfile(path):
-            raise Exception("""%s: You need to set up your personal results database before saving data to it.
-            See the README for details.""" % path)
+    def __init__(self, path, initing=False):
+        if not initing and not os.path.isfile(path):
+            raise Exception("Database not found at %s\nPlease create the database using --db_init before using it." % path)
         self.conn = db.connect(path)
         self.cur = self.conn.cursor()
 
@@ -306,17 +332,20 @@ class SQLiteDBManager(DBManager):
         return (":%s" % field)
 
     def insert(self, table, dic):
-        (fnames, fsubst) = self.build_fields(dic.keys())
+        (fnames, fsubst) = self.build_fields_insert(dic.keys())
         sql = ("INSERT INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
         self.cur.execute(sql, dic)
         return self.cur.lastrowid
 
     def insert_ignore_many(self, table, coll):
         """Insert or ignore rows with colliding ID and commits"""
-        (fnames, fsubst) = self.build_fields(coll[0].keys())
+        (fnames, fsubst) = self.build_fields_insert(coll[0].keys())
         sql = ("INSERT OR IGNORE INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
         self.cur.executemany(sql, coll)
         self.conn.commit()
+
+    def execute_script(self, sql):
+        self.cur.executescript(sql)
 
 class PostgresDBManager(DBManager):
     connstr = ""
@@ -343,14 +372,14 @@ class PostgresDBManager(DBManager):
         return ("%%(%s)s" % field)
 
     def insert(self, table, dic):
-        (fnames, fsubst) = self.build_fields(dic.keys())
+        (fnames, fsubst) = self.build_fields_insert(dic.keys())
         sql = ("INSERT INTO %s (%s) VALUES (%s) RETURNING id" % (table, fnames, fsubst))
         self.cur.execute(sql, dic)
         return self.cur.fetchone()[0]
 
     def insert_ignore_many(self, table, coll):
         """Insert or ignore rows with colliding ID, and commits"""
-        (fnames, fsubst) = self.build_fields(coll[0].keys())
+        (fnames, fsubst) = self.build_fields_insert(coll[0].keys())
         sql = ("INSERT INTO %s (%s) SELECT %s WHERE NOT EXISTS (SELECT 1 FROM %s WHERE id = %s)" %
                (table, fnames, fsubst, table, self.subst_pattern("id")))
 
@@ -377,6 +406,11 @@ class CLIResultPrinter(TestResultHandler):
     FAIL = "\033[31m"
     ABANDON = "\033[33m"
 
+    verbose = False
+
+    def __init__(self, verbose=False):
+        self.verbose = verbose
+
     def start_test(self, testcase):
         self.print_heading(testcase.filename)
 
@@ -389,7 +423,9 @@ class CLIResultPrinter(TestResultHandler):
             self.print_abandon("Aborted...")
         else:
             print self.ABANDON+"Something really weird happened"+self.NORMAL
-        if VERBOSE or DEBUG:
+        if self.verbose:
+            print "Exit code: %s" % (testcase.exit_code,)
+            print "Test is negative? %s" % (testcase.is_negative(),)
             print "=== STDOUT ==="
             print testcase.stdout
             print "=== STDERR ==="
@@ -530,7 +566,7 @@ class Interpreter:
         pass
 
     def build_args(self, testcase):
-        return [self.path, testcase.filename]
+        return [self.path, testcase.get_realpath()]
 
     def run_test(self, testcase):
         """Mutates testcase with appropriate result"""
@@ -583,20 +619,20 @@ class LambdaS5(Interpreter):
     def get_name(self):
         return "LambdaS5"
 
+    def set_path(self, path):
+        self.path = os.path.abspath(path)
+
     def setup(self):
         # TODO: Use cwd parameter of Popen instead of chdir-ing??
         self.current_dir = os.getcwd()
         os.chdir(os.path.dirname(self.path))
 
-    def build_args(self,filename):
-        return [os.path.abspath(self.path), filename]
-
     def teardown(self):
         os.chdir(self.current_dir)
 
 class JSRef(Interpreter):
-    interp_dir = os.path.join(JSCERT_ROOT_DIR,"interp")
-    path = os.path.join(interp_dir,"run_js")
+    interp_dir = os.path.join(JSCERT_ROOT_DIR, "interp")
+    path = os.path.join(interp_dir, "run_js")
     arg_name = "jsref"
     no_parasite = False
     jsonparser = False
@@ -610,10 +646,10 @@ class JSRef(Interpreter):
 
     # TODO: Swap to standard once parser has a version flag
     def determine_version(self):
-        out = subprocess.check_output(["git","rev-parse","HEAD"])
-        self.version = out.strip()
+        out = subprocess.check_output(["git","rev-parse","HEAD"], cwd=JSCERT_ROOT_DIR)
+        return out.strip()
 
-    def build_args(self,filename):
+    def build_args(self, testcase):
         # Normally we run a test like this:
         #./interp/run_js -jsparser interp/parser/lib/js_parser.jar -test_prelude interp/test_prelude.js -file filename
         # But if this is a LambdaS5 test, we need additional kit, like this:
@@ -631,38 +667,37 @@ class JSRef(Interpreter):
             arglist.append("-skip-init")
         arglist.append("-test_prelude")
         arglist.append(os.path.join("interp","test_prelude.js"))
-        if filename.startswith(os.path.join(os.getcwd(),"tests/LambdaS5/unit-tests/")):
+        if testcase.isLambdaS5Test():
             arglist.append("-test_prelude")
             arglist.append("tests/LambdaS5/lambda-pre.js")
             arglist.append("-test_prelude")
-            arglist.append(filename)
+            arglist.append(testcase.get_realpath())
             arglist.append("-file")
             arglist.append("tests/LambdaS5/lambda-post.js")
-        elif filename.startswith(os.path.join(os.getcwd(), "tests/SpiderMonkey/")):
+        elif testcase.isSpiderMonkeyTest():
             arglist.append("-test_prelude")
             arglist.append("interp/test_prelude_SpiderMonkey.js")
             arglist.append("-test_prelude")
             arglist.append("tests/SpiderMonkey/tests/shell.js")
             arglist.append("-file")
-            arglist.append(filename)
-        elif self.usesInclude(filename):
+            arglist.append(testcase.get_realpath())
+        elif testcase.usesInclude():
             if VERBOSE or DEBUG:
                 print "Using include libs."
             arglist.append("-test_prelude")
             arglist.append("interp/libloader.js")
             arglist.append("-file")
-            arglist.append(filename)
+            arglist.append(testcase.get_realpath())
         else:
             arglist.append("-file")
-            arglist.append(filename)
+            arglist.append(testcase.get_realpath())
         if self.no_parasite:
             arglist.append("-no-parasite")
         return arglist
 
-class Job:
+class Job(DBObject):
     """Information about a particular test job"""
     _table = "test_jobs"
-    _dbid = 0
     title = ""
     note = ""
     impl_name = ""
@@ -673,6 +708,8 @@ class Job:
     condor_cluster = 0
     condor_scheduler = ""
 
+    interpreter = None
+
     """
     batch_size of 0 indicates a single batch containing all tests
     n>0 produces batches of size n
@@ -680,10 +717,11 @@ class Job:
     batch_size = 0
     batches = None
 
-    def __init__(self, title, note, impl, batch_size=0):
+    def __init__(self, title, note, interpreter, batch_size=0):
+        self.interpreter = interpreter
         self.create_time = datetime.now()
-        self.impl_name = impl.get_name()
-        self.impl_version = impl.get_version()
+        self.impl_name = interpreter.get_name()
+        self.impl_version = interpreter.get_version()
         self.set_repo_version()
         self.user = pwd.getpwuid(os.geteuid()).pw_name
         self.batch_size = batch_size
@@ -709,9 +747,8 @@ class Job:
         for testcase in testcases:
             self.add_testcase(testcase)
 
-    def db_dict(self):
-        return {"id": self._dbid,
-                "title": self.title,
+    def _db_dict(self):
+        return {"title": self.title,
                 "note": self.note,
                 "impl_name": self.impl_name,
                 "impl_version": self.impl_version,
@@ -722,10 +759,9 @@ class Job:
                 "condor_scheduler": self.condor_scheduler}
 
 
-class TestBatch(Timer):
+class TestBatch(Timer, DBObject):
     """Information about a particular test batch"""
     _table = "test_batches"
-    _dbid = 0
     job = None
 
     # Machine info
@@ -749,6 +785,7 @@ class TestBatch(Timer):
         self.passed_tests = []
         self.failed_tests = []
         self.aborted_tests = []
+        self.job = job
 
     def __len__(self):
         return len(self.pending_tests)
@@ -801,15 +838,14 @@ class TestBatch(Timer):
                 "failures": map(lambda x:x.report_dict() , self.failed_tests),
                 "passes": map(lambda x:x.report_dict() , self.passed_tests)}
 
-    def db_dict(self):
-        d = {"id": self._dbid,
-             "system": self.system,
+    def _db_dict(self):
+        d = {"system": self.system,
              "osnodename": self.osnodename,
              "osrelease": self.osrelease,
              "osversion": self.osversion,
              "hardware": self.hardware,
              "start_time": self.start_time,
-             "end_time": self.end_time,
+             "end_time": self.stop_time,
              "condor_proc": self.condor_proc}
         if self.job != None:
             d['job_id'] = self.job._dbid
@@ -826,7 +862,9 @@ class Runtests:
     def __init__(self,):
         self.handlers = []
 
-    def add_result_handler(self, handler):
+    def add_handler(self, handler):
+        if not isinstance(handler, TestResultHandler):
+            raise TypeError("%s is not a TestResultHandler" % (handler,))
         self.handlers.append(handler)
 
     def get_testcases_from_paths(self, paths, testcases=[], factory=TestCase):
@@ -867,7 +905,7 @@ class Runtests:
             for handler in self.handlers:
                 handler.start_test(testcase)
 
-            self.interpreter.run_test(testcase)
+            batch.job.interpreter.run_test(testcase)
 
             batch.test_finished(testcase)
 
@@ -880,7 +918,7 @@ class Runtests:
 
         # Tell handlers that we're done
         for handler in self.handlers:
-            handler.end_batch(batch)
+            handler.finish_batch(batch)
 
     def condor_submit(self, job, initial_args):
         import htcondor
@@ -976,10 +1014,12 @@ class Runtests:
 
         interp_grp = argp.add_argument_group(title="Interpreter options")
         jsr = JSRef()
-        interp_grp.add_argument("--interp", action="store", choices=[jsr, Spidermonkey(), LambdaS5(), NodeJS(), Interpreter()], default=jsr, help="Interpreter type (default: jsref)")
+        interp_grp.add_argument("--interp", action="store",
+            choices=[jsr, Spidermonkey(), LambdaS5(), NodeJS(), Interpreter()], default=jsr,
+            help="Interpreter type (default: jsref)")
 
         interp_grp.add_argument("--interp_path", action="store", metavar="path", default="",
-                          help="Where to find the interpreter (a sensible default may be provided for some types)")
+            help="Where to find the interpreter (a sensible default may be provided for some types)")
 
         interp_grp.add_argument("--interp_version", action="store", metavar="version", default="",
             help="The version of the interpreter you're running. (Default is type-specific, usually by executing the --version flag of the interpeter)")
@@ -1061,7 +1101,7 @@ class Runtests:
                 if not args.dbpath:
                     args.dbpath = os.path.join(JSCERT_ROOT_DIR, "test_data", "test_results.db")
 
-                dbmanager = SQLiteDBManager(args.dbpath)
+                dbmanager = SQLiteDBManager(args.dbpath, args.db_init)
 
             elif args.db == "postgres":
                 if not args.dbpath:
@@ -1077,11 +1117,13 @@ class Runtests:
                 dbmanager.import_schema()
                 print "Database created successfully"
                 exit(0)
+
+            self.add_handler(dbmanager)
         else:
             dbmanager = None
 
         # Interpreter
-        interpreter = args.interpreter
+        interpreter = args.interp
         if isinstance(interpreter, JSRef):
             interpreter.no_parasite = args.no_parasite
             interpreter.jsonparser = args.jsonparser
@@ -1123,7 +1165,7 @@ class Runtests:
             exit(0)
 
         # What other output handlers do we want to configure?
-        self.add_handler(CLIResultPrinter())
+        self.add_handler(CLIResultPrinter(args.verbose or args.debug))
         if args.webreport:
             self.add_handler(WebResultPrinter(args.templatedir, args.reportdir, args.noindex))
         # What to do if the user hits control-C
