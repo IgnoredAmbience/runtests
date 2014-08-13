@@ -12,7 +12,7 @@ Mostly compatible with both sqlite and postgres, except:
 The autoincrement and *** POSTGRES ONLY *** lines are modified appropriately by the runtests.py
 database create command.
 */
-/*** POSTGRES ONLY *** CREATE TYPE result_text AS ENUM ('PASS', 'FAIL', 'ABORT'); ***/
+/*** POSTGRES ONLY *** CREATE TYPE result_text AS ENUM ('PASS', 'FAIL', 'ABORT', 'UNKNOWN'); ***/
 
 CREATE TABLE test_jobs
   ( id integer primary key autoincrement

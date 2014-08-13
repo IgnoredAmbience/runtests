@@ -228,7 +228,7 @@ class DBManager(TestResultHandler):
         self.connect()
         self.update_object(batch)
         self.conn.commit()
-        if not self.wait_for_batch:
+        if self.wait_for_batch:
             self.disconnect()
 
     def start_test(self, testcase):
@@ -356,7 +356,7 @@ class PostgresDBManager(DBManager):
         self.schema = schema
 
     def connect(self):
-        if not self.conn or self.conn.closed:
+        if (not self.conn) or (self.conn.closed != 0):
             self.conn = psycopg2.connect(self.connstr)
             self.cur = self.conn.cursor()
             if self.schema:
@@ -367,6 +367,7 @@ class PostgresDBManager(DBManager):
         self.cur.close()
         self.cur = None
         self.conn.close()
+        self.conn = None
 
     def subst_pattern(self, field):
         return ("%%(%s)s" % field)
@@ -384,7 +385,6 @@ class PostgresDBManager(DBManager):
                (table, fnames, fsubst, table, self.subst_pattern("id")))
 
         self.cur.execute("LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE" % table)
-        print sql
         self.cur.executemany(sql, coll)
         self.conn.commit()
 
@@ -809,7 +809,7 @@ class TestBatch(Timer, DBObject):
         return self.passed_tests + self.failed_tests + self.aborted_tests
 
     def set_machine_details(self):
-        (self.sysname, self.nodename, self.release, self.version, self.machine) = os.uname()
+        (self.system, self.osnodename, self.osrelease, self.osversion, self.hardware) = os.uname()
 
     def test_finished(self, testcase):
         if testcase.passed():
@@ -944,6 +944,8 @@ class Runtests:
         c['Owner'] = job.user
         c['Cmd'] = __file__
         c['Iwd'] = os.getcwd()
+
+        c['Err'] = "conor_$$([ProcId]).err"
 
         # Build argument string
         args_to_copy = ["db", "dbpath", "db_pg_schema", "interp", "interp_path",
