@@ -4,24 +4,17 @@ A not-so-mini test harness. Runs all the files you specify through an interprete
 you specify, and collates the exit codes for you. Call with the -h switch to
 find out about options.
 """
-try:
-    import sys
-    import os
-    import signal
-    import subprocess
-    import getpass
-    from datetime import datetime, time
-    import re
-    import urllib
-    from collections import deque
-    import pwd
-    import argparse
-except ImportError as e:
-    print >> sys.stderr, "Failed import: %s" % e
-    print >> sys.stderr, os.uname()
-    print >> sys.stderr, sys.version
-    exit(1)
-
+import sys
+import os
+import signal
+import subprocess
+import getpass
+from datetime import datetime, time
+import re
+import urllib
+from collections import deque
+import pwd
+import argparse
 
 JSCERT_ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
 DB_SCHEMA_LOCATION = os.path.join(JSCERT_ROOT_DIR, 'test_data', 'createTestDB.sql')
@@ -1265,9 +1258,4 @@ On Imperial machines you will need to set the following environment variables to
         self.run(batch)
 
 if __name__ == "__main__":
-    try:
-        Runtests().main()
-    except Exception as e:
-        print >> sys.stderr, e
-        print >> sys.stderr, os.uname()
-        print >> sys.stderr, sys.version
+    Runtests().main()
