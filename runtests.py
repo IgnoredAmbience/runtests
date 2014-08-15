@@ -4,19 +4,24 @@ A not-so-mini test harness. Runs all the files you specify through an interprete
 you specify, and collates the exit codes for you. Call with the -h switch to
 find out about options.
 """
+try:
+    import sys
+    import os
+    import signal
+    import subprocess
+    import getpass
+    from datetime import datetime, time
+    import re
+    import urllib
+    from collections import deque
+    import pwd
+    import argparse
+except ImportError as e:
+    print >> sys.stderr, "Failed import: %s" % e
+    print >> sys.stderr, os.uname()
+    print >> sys.stderr, sys.version
+    exit(1)
 
-import argparse
-import signal
-import subprocess
-import os
-import getpass
-import sqlite3 as db
-import psycopg2
-from datetime import datetime, time
-import re
-import urllib
-from collections import deque
-import pwd
 
 JSCERT_ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
 DB_SCHEMA_LOCATION = os.path.join(JSCERT_ROOT_DIR, 'test_data', 'createTestDB.sql')
@@ -57,6 +62,7 @@ class TestCase(Timer, DBObject):
     whether it passed, failed or aborted, and what output it generated along the way.
     """
     _table = "test_runs"
+    batch = None
 
     # Fake-enum for result
     UNKNOWN = 0
@@ -142,12 +148,15 @@ class TestCase(Timer, DBObject):
                 "stderr": self.stderr}
 
     def _db_dict(self):
-        return {"test_id": self.get_relpath(),
-                "result": self.get_result_text(),
-                "exit_code": self.exit_code,
-                "stdout": self.stdout,
-                "stderr": self.stderr,
-                "duration": self.get_duration()}
+        d = {"test_id": self.get_relpath(),
+             "result": self.get_result_text(),
+             "exit_code": self.exit_code,
+             "stdout": self.stdout,
+             "stderr": self.stderr,
+             "duration": self.get_duration()}
+        if self.batch:
+            d['batch_id'] = self.batch._dbid
+        return d
 
     def db_tc_dict(self):
         return {"id": self.get_relpath(),
@@ -171,7 +180,7 @@ class TestCase(Timer, DBObject):
     def isSpiderMonkeyTest(self):
         return self.get_relpath().startswith("tests/SpiderMonkey/")
 
-class TestResultHandler:
+class TestResultHandler(object):
     """
     Recieves notifications of events in the test cycle
 
@@ -204,12 +213,15 @@ class DBManager(TestResultHandler):
     cur = None
     wait_for_batch = False
 
+    def __del__(self):
+        self.disconnect()
+
     def connect(self):
         """Only implement for db backends with limited connection pools"""
         pass
 
     def disconnect(self):
-        """Only implement for db backends with limited connection pools"""
+        """Only implement for db backends with limited connection pools, or require explicit commit"""
         pass
 
     def insert_testcases(self, testcases):
@@ -223,6 +235,7 @@ class DBManager(TestResultHandler):
             self.insert_object(batch)
             for test in batch.get_testcases():
                 self.insert_object(test)
+        self.conn.commit()
 
     def start_batch(self, batch):
         self.connect()
@@ -306,7 +319,7 @@ class DBManager(TestResultHandler):
         """Assumes all objects passed in are of same class"""
         table = objs[0]._table
         dicts = map(lambda o: o.db_dict(), objs)
-        self.update_many(self, table, dicts)
+        self.update_many(table, dicts)
 
     def import_schema(self):
         with open(DB_SCHEMA_LOCATION, 'r') as f:
@@ -323,9 +336,11 @@ class DBManager(TestResultHandler):
 
 class SQLiteDBManager(DBManager):
     def __init__(self, path, initing=False):
+        import sqlite3
+
         if not initing and not os.path.isfile(path):
             raise Exception("Database not found at %s\nPlease create the database using --db_init before using it." % path)
-        self.conn = db.connect(path)
+        self.conn = sqlite3.connect(path)
         self.cur = self.conn.cursor()
 
     def subst_pattern(self, field):
@@ -352,10 +367,12 @@ class PostgresDBManager(DBManager):
     schema = ""
 
     def __init__(self, connstr, schema=""):
+        import psycopg2
         self.connstr = connstr
         self.schema = schema
 
     def connect(self):
+        import psycopg2
         if (not self.conn) or (self.conn.closed != 0):
             self.conn = psycopg2.connect(self.connstr)
             self.cur = self.conn.cursor()
@@ -364,10 +381,13 @@ class PostgresDBManager(DBManager):
                 self.conn.commit()
 
     def disconnect(self):
-        self.cur.close()
-        self.cur = None
-        self.conn.close()
-        self.conn = None
+        if self.cur:
+            self.cur.close()
+            self.cur = None
+        if self.conn:
+            self.conn.commit()
+            self.conn.close()
+            self.conn = None
 
     def subst_pattern(self, field):
         return ("%%(%s)s" % field)
@@ -523,7 +543,7 @@ class WebResultPrinter(TestResultHandler):
                 with open(os.path.join(self.reportdir,"index.html"),"w") as outfile:
                     outfile.write(simplerenderer.render(outer.read(),{"body":pystache.render(template.read(),{"testlist":filenames})}))
 
-class Interpreter:
+class Interpreter(object):
     """Base class for Interpreter calling methods"""
     pass_code = 0
     fail_code = 1
@@ -535,8 +555,18 @@ class Interpreter:
     FAIL = 1
     ABORT = 2
 
-    def __str__(self):
-        return self.arg_name
+    @classmethod
+    def Construct(cls, name, *args):
+        for subcls in Interpreter.__subclasses__():
+            if name.lower() == subcls.__name__.lower():
+                return subcls(*args)
+        return cls(*args)
+
+    @classmethod
+    def Types(cls):
+        interps = map(lambda c: c.__name__.lower(), Interpreter.__subclasses__())
+        interps.append("generic")
+        return interps
 
     def get_name(self):
         return os.path.basename(self.path)
@@ -718,6 +748,8 @@ class Job(DBObject):
     batches = None
 
     def __init__(self, title, note, interpreter, batch_size=0):
+        self.title = title
+        self.note = note
         self.interpreter = interpreter
         self.create_time = datetime.now()
         self.impl_name = interpreter.get_name()
@@ -771,7 +803,7 @@ class TestBatch(Timer, DBObject):
     osversion = ""
     hardware = ""
 
-    condor_proc = 0
+    condor_proc = -1
 
     pending_tests = None
 
@@ -792,9 +824,12 @@ class TestBatch(Timer, DBObject):
 
     def add_testcase(self, testcase):
         self.pending_tests.append(testcase)
+        testcase.batch = self
 
     def add_testcases(self, testcases):
         self.pending_tests.extend(testcases)
+        for tc in tcs:
+            tc.batch = self
 
     def has_testcase(self):
         return len(self.pending_tests) > 0
@@ -920,6 +955,22 @@ class Runtests:
         for handler in self.handlers:
             handler.finish_batch(batch)
 
+    def condor_test_import(self):
+        try:
+            import htcondor
+            import classad
+        except ImportError as e:
+            print """
+Could not load modules required for Condor submit support:
+%s
+
+On Imperial machines you will need to set the following environment variables to enable Condor Python support:
+  export LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH:/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib:/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib/condor
+  export PYTHONPATH=/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib/python:$PYTHONPATH
+
+(This is to workaround a broken site-wide Condor installation)""" % e
+            exit(1)
+
     def condor_submit(self, job, initial_args):
         import htcondor
         import classad
@@ -930,7 +981,16 @@ class Runtests:
         batch_ids = map(lambda b: b._dbid, batches)
         batch_tcs = map(lambda b: b.get_testcases(), batches)
         tc_paths = map(lambda tcs: " ".join(map(lambda t: t.get_relpath(), tcs)), batch_tcs)
-        tc_ids = map(lambda tcs: ",".join(map(lambda t: t._dbid, tcs)), batch_tcs)
+        tc_ids = map(lambda tcs: ",".join(map(lambda t: str(t._dbid), tcs)), batch_tcs)
+
+        # Fetch the name of this machine in the condor cluster
+        coll = htcondor.Collector()
+        machine = coll.locate(htcondor.DaemonTypes.Startd)['Machine']
+        fsdomain = coll.query(
+            htcondor.AdTypes.Startd,
+            'Machine =?= "%s"' % machine,
+            ['FileSystemDomain']
+        )[0]['FileSystemDomain']
 
         c = classad.ClassAd()
         # Custom attributes
@@ -941,11 +1001,15 @@ class Runtests:
         # Standard job attributes
         c['AccountingGroup'] = 'jscert.' + job.user
         c['ShouldTransferFiles'] = 'IF_NEEDED'
+        c['FileSystemDomain'] = fsdomain
         c['Owner'] = job.user
+        c['JobUniverse'] = 5
         c['Cmd'] = __file__
         c['Iwd'] = os.getcwd()
 
-        c['Err'] = "conor_$$([ProcId]).err"
+        #c['Out'] = "condor_$$([ClusterId])-$$([ProcId]).out"
+        c['Err'] = "condor_logs/condor_$$([ClusterId])-$$([ProcId]).err"
+        #c['UserLog'] = "condor_$$([ClusterId]).log"
 
         # Build argument string
         args_to_copy = ["db", "dbpath", "db_pg_schema", "interp", "interp_path",
@@ -954,12 +1018,15 @@ class Runtests:
         arguments = ["--condor_run"]
         initial_args = vars(initial_args)
         for (arg, val) in initial_args.iteritems():
-            if arg in args_to_copy:
+            if val and arg in args_to_copy:
                 arguments.append("--%s" % arg)
-                arguments.append(val)
+                if not isinstance(val, bool):
+                    arguments.append(str(val))
         arguments.append("$$([tests[ProcId]])")
 
-        c['Arguments'] = ' '.join(arguments)
+        argstr =  ' '.join(arguments)
+        print "Using argstr: %s" % argstr
+        c['Arguments'] = argstr
 
         # Build the environment
         env = dict(os.environ)
@@ -972,10 +1039,15 @@ class Runtests:
         sched = htcondor.Schedd()
         cluster_id = sched.submit(c, n)
 
-        job.condor_scheduler = htcondor.Collector().locate(htcondor.DaemonTypes.Schedd)['Machine']
+        job.condor_scheduler = coll.locate(htcondor.DaemonTypes.Schedd)['Machine']
         job.condor_cluster = cluster_id
 
         return n
+
+    def condor_run_diags(self):
+        print "Argv: %s" % sys.argv
+        print "Cwd: %s" % os.getcwd()
+        print "Env: %s" % os.environ
 
     def condor_update_job(self, job, dbmanager):
         job._dbid = int(os.environ['_RUNTESTS_JOBID'])
@@ -987,6 +1059,8 @@ class Runtests:
         tcs = batch.get_testcases()
         for (tc, tc_id) in zip(tcs, tc_ids):
             tc._dbid = tc_id
+
+        return batch
 
     def interrupt_handler(self,signal,frame):
         if self.interrupted:
@@ -1016,8 +1090,7 @@ class Runtests:
 
         interp_grp = argp.add_argument_group(title="Interpreter options")
         jsr = JSRef()
-        interp_grp.add_argument("--interp", action="store",
-            choices=[jsr, Spidermonkey(), LambdaS5(), NodeJS(), Interpreter()], default=jsr,
+        interp_grp.add_argument("--interp", action="store", choices=Interpreter.Types(), default="jsref",
             help="Interpreter type (default: jsref)")
 
         interp_grp.add_argument("--interp_path", action="store", metavar="path", default="",
@@ -1072,7 +1145,7 @@ class Runtests:
         condor_args.add_argument("--condor", action="store_true",
             help="Schedule these testcases on the Condor distributed computing cluster, requires --psqlconfig")
 
-        condor_args.add_argument("--batch_size", action="store", metavar="n", default=-1,
+        condor_args.add_argument("--batch_size", action="store", metavar="n", default=-1, type=int,
             help="Number of testcases to run per Condor batch, if 0 run all tests in a single batch, otherwise run n tests per batch.")
 
         condor_args.add_argument("--condor_run", action="store_true", help=argparse.SUPPRESS)
@@ -1089,11 +1162,10 @@ class Runtests:
         DEBUG = args.debug
 
         if args.condor:
-            try:
-                import htcondor
-                import classad
-            except ImportError as e:
-                raise ImportError("Could not load modules required for Condor submit support: %s" % e)
+            self.condor_test_import()
+
+        if args.condor_run and args.verbose:
+            self.condor_run_diags()
 
         if args.db:
             if args.db == "sqlite":
@@ -1111,7 +1183,7 @@ class Runtests:
                 try:
                     with open(args.dbpath, "r") as f:
                         dbmanager = PostgresDBManager(f.readline(), args.db_pg_schema)
-                except Exception as e:
+                except IOError as e:
                     raise Exception("Could not open postgres configuration: %s" % e)
 
             if args.db_init:
@@ -1125,7 +1197,7 @@ class Runtests:
             dbmanager = None
 
         # Interpreter
-        interpreter = args.interp
+        interpreter = Interpreter.Construct(args.interp)
         if isinstance(interpreter, JSRef):
             interpreter.no_parasite = args.no_parasite
             interpreter.jsonparser = args.jsonparser
@@ -1162,6 +1234,7 @@ class Runtests:
         if args.condor:
             n = self.condor_submit(job, args)
             dbmanager.update_object(job)
+            dbmanager.disconnect()
             print ("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
                 (n, job.condor_cluster, job.condor_scheduler, job._dbid))
             exit(0)
@@ -1185,4 +1258,9 @@ class Runtests:
         self.run(batch)
 
 if __name__ == "__main__":
-    Runtests().main()
+    try:
+        Runtests().main()
+    except Exception as e:
+        print >> sys.stderr, e
+        print >> sys.stderr, os.uname()
+        print >> sys.stderr, sys.version
