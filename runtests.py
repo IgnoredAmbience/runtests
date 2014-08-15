@@ -1037,6 +1037,7 @@ On Imperial machines you will need to set the following environment variables to
         env['_RUNTESTS_JOBID'] = job._dbid
         env['_RUNTESTS_BATCHID'] = "$$([batchids[ProcId]])"
         env['_RUNTESTS_TESTIDS'] = "$$([testids[ProcId]])"
+        env['BISECT_FILE'] = "bisect_$$([ClusterId])-$$([ProcId])-"
         c['Environment'] = " ".join(map(lambda it: "%s='%s'" % it, env.iteritems()))
 
         sched = htcondor.Schedd()
