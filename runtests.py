@@ -971,7 +971,7 @@ On Imperial machines you will need to set the following environment variables to
 (This is to workaround a broken site-wide Condor installation)""" % e
             exit(1)
 
-    def condor_submit(self, job, initial_args):
+    def condor_submit(self, job, machine_reqs, initial_args):
         import htcondor
         import classad
 
@@ -1004,12 +1004,14 @@ On Imperial machines you will need to set the following environment variables to
         c['FileSystemDomain'] = fsdomain
         c['Owner'] = job.user
         c['JobUniverse'] = 5
+        c['Requirements'] = machine_reqs
         c['Cmd'] = __file__
         c['Iwd'] = os.getcwd()
 
-        #c['Out'] = "condor_$$([ClusterId])-$$([ProcId]).out"
-        c['Err'] = "condor_logs/condor_$$([ClusterId])-$$([ProcId]).err"
-        #c['UserLog'] = "condor_$$([ClusterId]).log"
+        if args.verbose:
+            #c['Out'] = "condor_$$([ClusterId])-$$([ProcId]).out"
+            c['Err'] = "condor_logs/condor_$$([ClusterId])-$$([ProcId]).err"
+            #c['UserLog'] = "condor_$$([ClusterId]).log"
 
         # Build argument string
         args_to_copy = ["db", "dbpath", "db_pg_schema", "interp", "interp_path",
@@ -1025,8 +1027,9 @@ On Imperial machines you will need to set the following environment variables to
         arguments.append("$$([tests[ProcId]])")
 
         argstr =  ' '.join(arguments)
-        print "Using argstr: %s" % argstr
         c['Arguments'] = argstr
+        if args.verbose:
+            print "Using argstr: %s" % argstr
 
         # Build the environment
         env = dict(os.environ)
@@ -1145,6 +1148,9 @@ On Imperial machines you will need to set the following environment variables to
         condor_args.add_argument("--condor", action="store_true",
             help="Schedule these testcases on the Condor distributed computing cluster, requires --psqlconfig")
 
+        condor_args.add_argument("--condor_req", action="store", metavar="reqs", default="OpSysMajorVersion > 12",
+            help="ClassAd describing minimum requirements for machines jobs are to run on, defaults to ICDoC minimum")
+
         condor_args.add_argument("--batch_size", action="store", metavar="n", default=-1, type=int,
             help="Number of testcases to run per Condor batch, if 0 run all tests in a single batch, otherwise run n tests per batch.")
 
@@ -1232,7 +1238,7 @@ On Imperial machines you will need to set the following environment variables to
 
         # Submit job to Condor?
         if args.condor:
-            n = self.condor_submit(job, args)
+            n = self.condor_submit(job, args.condor_req, args)
             dbmanager.update_object(job)
             dbmanager.disconnect()
             print ("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
