@@ -951,20 +951,49 @@ class Runtests:
         for handler in self.handlers:
             handler.finish_batch(batch)
 
+    def condor_help(self):
+        print """
+Condor Help
+
+This script is able to submit test run jobs to Condor, results may only be recorded using the Postgres database option.
+
+Ensure you have the Condor binaries in your PATH (this is not necessary for this script to run, but is required for use of eg, condor_q)
+  export PATH ${PATH}:${CONDOR_HOME}/bin
+
+You should also ensure that the Condor Python binding libraries are in your PYTHONPATH, eg:
+  export PYTHONPATH=${PYTHONPATH}:${CONDOR_HOME}/lib/python
+
+On Imperial CSG-run machines you will need to set the following environment variables to enable Condor Python support:
+  export LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH:/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib:/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib/condor
+  export PYTHONPATH=/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib/python:$PYTHONPATH
+(This is to workaround a broken site-wide Condor installation)
+
+A Condor Python binding import check is executed at the end of this help message.
+
+A full JSCert (Coq/OCaml) installation is not required for each machine the tests are to be run on, you just need a working run_js executable in the interp directory. (You should test this on an appropriate machine in the cluster before a run). The run_js interpreter uses few shared libraries, so should hopefully be portable between Linux distros without need for recompilation.
+
+A Postgres database is required to collect results. Options as printed by --help should be straightforward. A template Postgres configuration file is available in the repo at /.pgconfig.example
+If you've forgotten them, your Postgres username and password are usually kept in the .pgpass file in your home directory, this testrunner makes no attempt to read this file.
+
+Sample command line to run tests on Condor:
+  runtests.py --condor --db postgres --batch_size 4 tests/test262/
+
+Note that for large test suites, such as test262, the Condor scheduler daemon runs out of memory with >~5000 jobs. The batch size parameter groups multiple (4 in this case) test cases into one Condor job to prevent an explosion in memory. The memory use results from the way this script passes parameters to Condor and the way Condor stores them, we should probably fix this...
+
+The status of Condor jobs can be retrieved using the condor_q command. Jobs that have become stuck can be removed using condor_rm.
+
+Presently, the only way to interrogate the results is to perform SQL queries by hand. The analysis scripts haven't yet been updated to support the new database schema.
+"""
+        print "Testing Condor Python bindings: ",
+        self.condor_test_import()
+        print "OK!"
+
     def condor_test_import(self):
         try:
             import htcondor
             import classad
         except ImportError as e:
-            print """
-Could not load modules required for Condor submit support:
-%s
-
-On Imperial machines you will need to set the following environment variables to enable Condor Python support:
-  export LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH:/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib:/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib/condor
-  export PYTHONPATH=/vol/condor/releases/8.0.6/condor-8.0.6-x86_64_Ubuntu12-stripped/lib/python:$PYTHONPATH
-
-(This is to workaround a broken site-wide Condor installation)""" % e
+            print >> sys.stderr, "Could not load modules required for Condor submit support (see --condor_help): %s" % e
             exit(1)
 
     def condor_submit(self, job, machine_reqs, initial_args, verbose=False):
@@ -1039,7 +1068,11 @@ On Imperial machines you will need to set the following environment variables to
         sched = htcondor.Schedd()
         cluster_id = sched.submit(c, n)
 
-        job.condor_scheduler = coll.locate(htcondor.DaemonTypes.Schedd)['Machine']
+        try:
+            job.condor_scheduler = coll.locate(htcondor.DaemonTypes.Schedd)['Machine']
+        except RuntimeError as e:
+            print >> sys.stderr, "The Condor scheduler appears to have failed. You should probably run condor_restart."
+            raise e
         job.condor_cluster = cluster_id
 
         return n
@@ -1077,9 +1110,15 @@ On Imperial machines you will need to set the following environment variables to
     def build_arg_parser(self):
         # Our command-line interface
         argp = argparse.ArgumentParser(
-            description="Run some Test262-style tests with some JS implementation: by default, with JSRef.")
+            description="""Run some tests with some JS implementation: by default, with JSRef.
 
-        argp.add_argument("filenames", metavar="path", nargs="+",
+Most options below should be self explanatory.
+This script also can generate html reports of the test jobs and log test results into a database (Postgres or SQLite) for further analysis.
+
+Testcases can either be run sequentially on the local machine or scheduled to run in parallel on a Condor computing cluster.
+""")
+
+        argp.add_argument("filenames", metavar="path", nargs="*",
             help="The test file or directory we want to run. Directory names will recusively run all .js files.")
 
         argp.add_argument("--title", action="store", metavar="string", default="",
@@ -1143,15 +1182,17 @@ On Imperial machines you will need to set the following environment variables to
         # Condor infos
         condor_args = argp.add_argument_group(title="Condor Options")
         condor_args.add_argument("--condor", action="store_true",
-            help="Schedule these testcases on the Condor distributed computing cluster, requires --psqlconfig")
+            help="Schedule these testcases on the Condor distributed computing cluster, requires Postgres database")
 
-        condor_args.add_argument("--condor_req", action="store", metavar="reqs", default="OpSysMajorVersion > 12",
+        condor_args.add_argument("--condor_req", action="store", metavar="reqs", default="OpSysMajorVer > 12",
             help="ClassAd describing minimum requirements for machines jobs are to run on, defaults to ICDoC minimum")
 
         condor_args.add_argument("--batch_size", action="store", metavar="n", default=-1, type=int,
             help="Number of testcases to run per Condor batch, if 0 run all tests in a single batch, otherwise run n tests per batch.")
 
         condor_args.add_argument("--condor_run", action="store_true", help=argparse.SUPPRESS)
+
+        condor_args.add_argument("--condor_help", action="store_true", help="Help on Condor setup")
 
         return argp
 
@@ -1163,6 +1204,10 @@ On Imperial machines you will need to set the following environment variables to
         global DEBUG
         VERBOSE = args.verbose
         DEBUG = args.debug
+
+        if args.condor_help:
+            self.condor_help()
+            exit(0)
 
         if args.condor:
             self.condor_test_import()
