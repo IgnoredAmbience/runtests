@@ -763,6 +763,9 @@ class Job(DBObject):
     def get_batches(self):
         return self.batches
 
+    def get_batch_count(self):
+        return len(self.batches)
+
     def add_testcase(self, testcase):
         if self.batch_size and len(self.batches[-1]) >= self.batch_size:
             self.new_batch()
@@ -964,7 +967,7 @@ On Imperial machines you will need to set the following environment variables to
 (This is to workaround a broken site-wide Condor installation)""" % e
             exit(1)
 
-    def condor_submit(self, job, machine_reqs, initial_args):
+    def condor_submit(self, job, machine_reqs, initial_args, verbose=False):
         import htcondor
         import classad
 
@@ -1001,7 +1004,7 @@ On Imperial machines you will need to set the following environment variables to
         c['Cmd'] = __file__
         c['Iwd'] = os.getcwd()
 
-        if args.verbose:
+        if verbose:
             #c['Out'] = "condor_$$([ClusterId])-$$([ProcId]).out"
             c['Err'] = "condor_logs/condor_$$([ClusterId])-$$([ProcId]).err"
             #c['UserLog'] = "condor_$$([ClusterId]).log"
@@ -1021,7 +1024,7 @@ On Imperial machines you will need to set the following environment variables to
 
         argstr =  ' '.join(arguments)
         c['Arguments'] = argstr
-        if args.verbose:
+        if verbose:
             print "Using argstr: %s" % argstr
 
         # Build the environment
@@ -1207,11 +1210,12 @@ On Imperial machines you will need to set the following environment variables to
         # Generate testcases
         testcases = self.get_testcases_from_paths(args.filenames)
         if dbmanager and not args.condor_run:
-            print "Preloading test-cases into database...",
+            print "Preloading test-cases into database..."
             dbmanager.connect()
             dbmanager.insert_testcases(testcases) # auto-commits
-            print " Done!"
+            print "Done!"
 
+        print "Building job..."
         # Build job
         job = Job(args.title, args.note, interpreter)
 
@@ -1224,15 +1228,19 @@ On Imperial machines you will need to set the following environment variables to
             job.batch_size = args.batch_size
 
         job.add_testcases(testcases)
+        print "Done! %s test batches created." % job.get_batch_count()
 
         # Insert it all into the database
         if not args.condor_run:
             if dbmanager:
+                print "Inserting job into database..."
                 dbmanager.create_job_batches_runs(job)
+                print "Done!"
 
         # Submit job to Condor?
         if args.condor:
-            n = self.condor_submit(job, args.condor_req, args)
+            print "Submitting to Condor Scheduler"
+            n = self.condor_submit(job, args.condor_req, args, args.verbose)
             dbmanager.update_object(job)
             dbmanager.disconnect()
             print ("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
