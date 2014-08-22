@@ -1029,7 +1029,7 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
         c['FileSystemDomain'] = fsdomain
         c['Owner'] = job.user
         c['JobUniverse'] = 5
-        c['Requirements'] = machine_reqs
+        c['Requirements'] = classad.ExprTree(machine_reqs)
         c['Cmd'] = __file__
         c['Iwd'] = os.getcwd()
 
