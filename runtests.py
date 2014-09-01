@@ -667,11 +667,6 @@ class JSRef(Interpreter):
     def get_name(self):
         return "JSRef"
 
-    # TODO: Swap to standard once parser has a version flag
-    def determine_version(self):
-        out = subprocess.check_output(["git","rev-parse","HEAD"], cwd=JSCERT_ROOT_DIR)
-        return out.strip()
-
     def build_args(self, testcase):
         # Normally we run a test like this:
         #./interp/run_js -jsparser interp/parser/lib/js_parser.jar -test_prelude interp/test_prelude.js -file filename
