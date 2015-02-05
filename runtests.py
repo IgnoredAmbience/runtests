@@ -7,7 +7,6 @@ find out about options.
 import sys
 import os
 import signal
-import subprocess
 import getpass
 from datetime import datetime, time
 import re
@@ -15,6 +14,11 @@ import urllib
 from collections import deque
 import pwd
 import argparse
+if sys.version_info < (3, 3):
+    # Use backported subprocess stdlib for timeout functionality
+    import subprocess32 as subprocess
+else:
+    import subprocess
 
 JSCERT_ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
 DB_SCHEMA_LOCATION = os.path.join(JSCERT_ROOT_DIR, 'test_data', 'createTestDB.sql')
@@ -62,7 +66,8 @@ class TestCase(Timer, DBObject):
     PASS = 1
     FAIL = 2
     ABORT = 3
-    RESULT_TEXT = ["UNKNOWN","PASS","FAIL","ABORT"]
+    TIMEOUT = 4
+    RESULT_TEXT = ["UNKNOWN","PASS","FAIL","ABORT","TIMEOUT"]
 
     filename = ""
     negative = False   # Whether the testcase is expected to fail
@@ -93,6 +98,8 @@ class TestCase(Timer, DBObject):
 
         if interp_result == Interpreter.ABORT:
             self.result = TestCase.ABORT
+        elif interp_result == Interpreter.TIMEOUT:
+            self.result = TestCase.TIMEOUT
         elif self.negative:
             if interp_result == Interpreter.PASS:
                 self.result = TestCase.FAIL
@@ -125,6 +132,9 @@ class TestCase(Timer, DBObject):
 
     def aborted(self):
         return self.result == self.ABORT
+
+    def timeout(self):
+        return self.result == self.TIMEOUT
 
     def get_relpath(self):
         """Returns path of test relative to JSCert project repo root directory"""
@@ -434,6 +444,8 @@ class CLIResultPrinter(TestResultHandler):
             self.print_fail("Failed :/")
         elif testcase.aborted():
             self.print_abandon("Aborted...")
+        elif testcase.timeout():
+            self.print_abandon("Timed out...")
         else:
             print self.ABANDON+"Something really weird happened"+self.NORMAL
         if self.verbose:
@@ -543,10 +555,12 @@ class Interpreter(object):
     path = ""
     version = "Version unknown"
     arg_name = "generic"
+    timeout = None
 
     PASS = 0
     FAIL = 1
     ABORT = 2
+    TIMEOUT = 3
 
     @classmethod
     def Construct(cls, name, *args):
@@ -575,7 +589,6 @@ class Interpreter(object):
 
     def determine_version(self):
         if self.path:
-            # Requires Python 2.7
             output = subprocess.check_output([self.path, "--version"])
             return output.strip()
         else:
@@ -585,6 +598,9 @@ class Interpreter(object):
         if path:
             self.path = path
 
+    def set_timeout(self, timeout):
+        self.timeout = timeout
+
     def setup(self):
         pass
 
@@ -593,18 +609,27 @@ class Interpreter(object):
 
     def run_test(self, testcase):
         """Mutates testcase with appropriate result"""
+        result = None
+
         self.setup()
         command = self.build_args(testcase)
 
         testcase.start_timer()
         test_pipe = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        output,errors = test_pipe.communicate()
+        try:
+            output,errors = test_pipe.communicate(timeout=self.timeout)
+        except subprocess.TimeoutExpired:
+            test_pipe.kill()
+            output,errors = test_pipe.communicate()
+            result = Interpreter.TIMEOUT
         testcase.stop_timer()
 
         output = output.decode("utf8").encode("ascii","xmlcharrefreplace")
         errors = errors.decode("utf8").encode("ascii","xmlcharrefreplace")
         ret = test_pipe.returncode
-        result = self.determine_result(testcase,ret,output,errors)
+        if not result:
+            result = self.determine_result(testcase,ret,output,errors)
+
         self.teardown()
 
         testcase.set_result(result, ret, output, errors)
@@ -1035,7 +1060,7 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
 
         # Build argument string
         args_to_copy = ["db", "dbpath", "db_pg_schema", "interp", "interp_path",
-                        "interp_version", "no_parasite", "debug", "verbose"]
+                        "interp_version", "no_parasite", "debug", "verbose", "timeout"]
 
         arguments = ["--condor_run"]
         initial_args = vars(initial_args)
@@ -1121,6 +1146,9 @@ Testcases can either be run sequentially on the local machine or scheduled to ru
 
         argp.add_argument("--note", action="store", metavar="string", default="",
             help="Optional explanatory note to be added to the test report.")
+
+        argp.add_argument("--timeout", action="store", metavar="timeout", type=int, default=None,
+            help="Timeout in seconds for each testcase, defaults to None.")
 
         interp_grp = argp.add_argument_group(title="Interpreter options")
         jsr = JSRef()
@@ -1246,6 +1274,7 @@ Testcases can either be run sequentially on the local machine or scheduled to ru
             interpreter.jsonparser = args.jsonparser
         interpreter.set_path(args.interp_path)
         interpreter.set_version(args.interp_version)
+        interpreter.set_timeout(args.timeout)
 
         # Generate testcases
         testcases = self.get_testcases_from_paths(args.filenames)
