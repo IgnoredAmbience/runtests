@@ -1159,12 +1159,15 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
     def build_arg_parser(self):
         # Our command-line interface
         argp = argparse.ArgumentParser(
+            fromfile_prefix_chars='@',
             description="""Run some tests with some JS implementation: by default, with JSRef.
 
 Most options below should be self explanatory.
 This script also can generate html reports of the test jobs and log test results into a database (Postgres or SQLite) for further analysis.
 
 Testcases can either be run sequentially on the local machine or scheduled to run in parallel on a Condor computing cluster.
+
+To include the contents of a file as commandline arguments, prefix the filename using the @ character.
 """)
 
         argp.add_argument("filenames", metavar="path", nargs="*",
@@ -1179,7 +1182,7 @@ Testcases can either be run sequentially on the local machine or scheduled to ru
         argp.add_argument("--timeout", action="store", metavar="timeout", type=int, default=None,
             help="Timeout in seconds for each testcase, defaults to None.")
 
-        argp.add_argument("--exclude", action="append", metavar="exclude", type=os.path.realpath, default=[],
+        argp.add_argument("--exclude", action="append", metavar="file", type=os.path.realpath, default=[],
             help="Files in test tree to exlude from testing")
 
 
