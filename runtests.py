@@ -945,29 +945,31 @@ class Runtests:
             raise TypeError("%s is not a TestResultHandler" % (handler,))
         self.handlers.append(handler)
 
-    def get_testcases_from_paths(self, paths, testcases=[], factory=TestCase):
+    def get_testcases_from_paths(self, paths, testcases=[], exclude=[]):
         return reduce(
-            lambda ts, p: self.get_testcases_from_path(p, ts, factory),
+            lambda ts, p: self.get_testcases_from_path(p, ts, exclude),
             paths, [])
 
-    def get_testcases_from_path(self, path, testcases=[], factory=TestCase):
+    def get_testcases_from_path(self, path, testcases=[], exclude=[]):
+        path = os.path.realpath(path)
         if not os.path.exists(path):
             raise IOError("No such file or directory: %s" % path)
 
         if os.path.isdir(path):
-            return self.get_testcases_from_dir(path, testcases, factory)
-        else:
-            testcases.append(factory(path))
-            return testcases
+            return self.get_testcases_from_dir(path, testcases, exclude)
+        elif not path in exclude:
+            testcases.append(TestCase(path))
 
-    def get_testcases_from_dir(self, dirname, testcases=[], factory=TestCase):
+        return testcases
+
+    def get_testcases_from_dir(self, dirname, testcases=[], exclude=[]):
         """Recusively walk the given directory looking for .js files, does not traverse symbolic links"""
         dirname = os.path.realpath(dirname)
         for r,d,f in os.walk(dirname):
             for filename in f:
                 filename = os.path.join(r,filename)
-                if os.path.isfile(filename) and filename.endswith(".js"):
-                    testcases.append(factory(filename))
+                if os.path.isfile(filename) and filename.endswith(".js") and not filename in exclude:
+                    testcases.append(TestCase(filename))
         return testcases
 
     def run(self, batch):
@@ -1177,6 +1179,10 @@ Testcases can either be run sequentially on the local machine or scheduled to ru
         argp.add_argument("--timeout", action="store", metavar="timeout", type=int, default=None,
             help="Timeout in seconds for each testcase, defaults to None.")
 
+        argp.add_argument("--exclude", action="append", metavar="exclude", type=os.path.realpath, default=[],
+            help="Files in test tree to exlude from testing")
+
+
         interp_grp = argp.add_argument_group(title="Interpreter options")
         jsr = JSRef()
         interp_grp.add_argument("--interp", action="store", choices=Interpreter.Types(), default="jsref",
@@ -1304,7 +1310,7 @@ Testcases can either be run sequentially on the local machine or scheduled to ru
         interpreter.set_timeout(args.timeout)
 
         # Generate testcases
-        testcases = self.get_testcases_from_paths(args.filenames)
+        testcases = self.get_testcases_from_paths(args.filenames, exclude=args.exclude)
         if dbmanager and not args.condor_run:
             print "Preloading test-cases into database..."
             dbmanager.connect()
