@@ -469,15 +469,20 @@ class CLIResultPrinter(TestResultHandler):
 
     def finish_batch(self, batch):
         if len(batch.failed_tests) > 0:
+            self.failed = True
             print "The following tests failed:"
             for failure in batch.failed_tests:
                 print failure.filename
         if len(batch.aborted_tests) > 0:
+            self.failed = True
             print "The following tests were abandoned"
             for abandoned in batch.aborted_tests:
                 print abandoned.filename
         print ("There were %d passes, %d fails, and %d abandoned tests." %
             (len(batch.passed_tests), len(batch.failed_tests), len(batch.aborted_tests)))
+
+    def get_exit_code(self):
+        return 1 if self.failed else 0
 
 class WebResultPrinter(TestResultHandler):
     """
@@ -1356,7 +1361,8 @@ To include the contents of a file as commandline arguments, prefix the filename 
             exit(0)
 
         # What other output handlers do we want to configure?
-        self.add_handler(CLIResultPrinter(args.verbose or args.debug))
+        cli = CLIResultPrinter(args.verbose or args.debug)
+        self.add_handler(cli)
         if args.webreport:
             self.add_handler(WebResultPrinter(args.templatedir, args.reportdir, args.noindex))
         # What to do if the user hits control-C
@@ -1372,6 +1378,7 @@ To include the contents of a file as commandline arguments, prefix the filename 
 
         # Let's go!
         self.run(batch)
+        exit(cli.get_exit_code())
 
 if __name__ == "__main__":
     Runtests().main()
