@@ -598,8 +598,11 @@ class Interpreter(object):
 
     def determine_version(self):
         if self.path:
-            output = subprocess.check_output([self.path, "--version"])
-            return output.strip()
+            try:
+                output = subprocess.check_output([self.path, "--version"])
+                return output.strip()
+            except:
+                return "Unknown version"
         else:
             return "Unknown version"
 
