@@ -14,6 +14,8 @@ import urllib
 from collections import deque
 import pwd
 import argparse
+import shutil
+import tempfile
 if sys.version_info < (3, 3):
     # Use backported subprocess stdlib for timeout functionality
     import subprocess32 as subprocess
@@ -557,6 +559,9 @@ class Interpreter(object):
     arg_name = "generic"
     timeout = None
 
+    trashesinput = False
+    tmpdir = None
+
     PASS = 0
     FAIL = 1
     ABORT = 2
@@ -574,6 +579,10 @@ class Interpreter(object):
         interps = map(lambda c: c.__name__.lower(), Interpreter.__subclasses__())
         interps.append("generic")
         return interps
+
+    def __init__(self):
+        if self.trashesinput:
+            self.tmpdir = tempfile.mkdtemp()
 
     def get_name(self):
         return os.path.basename(self.path)
@@ -606,6 +615,19 @@ class Interpreter(object):
 
     def build_args(self, testcase):
         return [self.path, testcase.get_realpath()]
+
+    """Get path to an input file, copying it to temporary storage to prevent race conditons, if required"""
+    def get_filepath(self, path, *paths):
+        filepath = os.path.join(path, *paths)
+
+        """Todo: Adjust so copies for concurrent task running only"""
+        if self.trashesinput:
+            base = os.path.basename(filepath)
+            tmpfile = os.path.join(self.tmpdir, base)
+            shutil.copy(filepath, tmpfile)
+            return tmpfile
+        else:
+            return filepath
 
     def run_test(self, testcase):
         """Mutates testcase with appropriate result"""
@@ -684,8 +706,10 @@ class JSRef(Interpreter):
     arg_name = "jsref"
     no_parasite = False
     jsonparser = False
+    trashesinput = True
 
     def __init__(self, no_parasite=False, jsonparser=False):
+        Interpreter.__init__(self)
         self.no_parasite = no_parasite
         self.jsonparser = jsonparser
 
@@ -709,31 +733,31 @@ class JSRef(Interpreter):
             arglist.append("-verbose")
             arglist.append("-skip-init")
         arglist.append("-test_prelude")
-        arglist.append(os.path.join("interp","test_prelude.js"))
+        arglist.append(self.get_filepath("interp","test_prelude.js"))
         if testcase.isLambdaS5Test():
             arglist.append("-test_prelude")
-            arglist.append("tests/LambdaS5/lambda-pre.js")
+            arglist.append(self.get_filepath("tests/LambdaS5/lambda-pre.js"))
             arglist.append("-test_prelude")
-            arglist.append(testcase.get_realpath())
+            arglist.append(self.get_filepath(testcase.get_realpath()))
             arglist.append("-file")
-            arglist.append("tests/LambdaS5/lambda-post.js")
+            arglist.append(self.get_filepath("tests/LambdaS5/lambda-post.js"))
         elif testcase.isSpiderMonkeyTest():
             arglist.append("-test_prelude")
-            arglist.append("interp/test_prelude_SpiderMonkey.js")
+            arglist.append(self.get_filepath("interp/test_prelude_SpiderMonkey.js"))
             arglist.append("-test_prelude")
-            arglist.append("tests/SpiderMonkey/tests/shell.js")
+            arglist.append(self.get_filepath("tests/SpiderMonkey/tests/shell.js"))
             arglist.append("-file")
-            arglist.append(testcase.get_realpath())
+            arglist.append(self.get_filepath(testcase.get_realpath()))
         elif testcase.usesInclude():
             if VERBOSE or DEBUG:
                 print "Using include libs."
             arglist.append("-test_prelude")
-            arglist.append("interp/libloader.js")
+            arglist.append(self.get_filepath("interp/libloader.js"))
             arglist.append("-file")
-            arglist.append(testcase.get_realpath())
+            arglist.append(self.get_filepath(testcase.get_realpath()))
         else:
             arglist.append("-file")
-            arglist.append(testcase.get_realpath())
+            arglist.append(self.get_filepath(testcase.get_realpath()))
         if self.no_parasite:
             arglist.append("-no-parasite")
         return arglist
