@@ -1271,6 +1271,8 @@ To include the contents of a file as commandline arguments, prefix the filename 
 
         if args.condor:
             self.condor_test_import()
+            if not args.db:
+                raise Exception("A database is required to store condor results in")
 
         if args.condor_run and args.verbose:
             self.condor_run_diags()
