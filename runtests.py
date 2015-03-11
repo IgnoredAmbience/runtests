@@ -1097,7 +1097,7 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
             if val and arg in args_to_copy:
                 arguments.append("--%s" % arg)
                 if not isinstance(val, bool):
-                    arguments.append(str(val))
+                    arguments.append('"%s"' % val)
         arguments.append("$$([tests[ProcId]])")
 
         argstr =  ' '.join(arguments)
