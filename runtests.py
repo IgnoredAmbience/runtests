@@ -711,6 +711,7 @@ class LambdaS5(Interpreter):
 class JSRef(Interpreter):
     interp_dir = os.path.join(JSCERT_ROOT_DIR, "interp")
     path = os.path.join(interp_dir, "run_js")
+    parser_path = os.path.join(interp_dir,"parser","lib","js_parser.jar")
     arg_name = "jsref"
     no_parasite = False
     jsonparser = False
@@ -724,6 +725,10 @@ class JSRef(Interpreter):
     def get_name(self):
         return "JSRef"
 
+    def set_parser(self, parser=""):
+        if parser:
+            self.parser_path = parser
+
     def build_args(self, testcase):
         # Normally we run a test like this:
         #./interp/run_js -jsparser interp/parser/lib/js_parser.jar -test_prelude interp/test_prelude.js -file filename
@@ -731,9 +736,7 @@ class JSRef(Interpreter):
         # ./interp/run_js -jsparser interp/parser/lib/js_parser.jar -test_prelude interp/test_prelude.js -test_prelude tests/LambdaS5/lambda-pre.js -test_prelude filename -file tests/LambdaS5/lambda-post.js
         # We can tell if it's a LambdaS5 test, because those start with "tests/LambdaS5/unit-tests/".
         # In addition, we may want to add some debug flags.
-        arglist = [self.path,
-                   "-jsparser",
-                   os.path.join(self.interp_dir,"parser","lib","js_parser.jar")]
+        arglist = [self.path, "-jsparser", self.parser_path]
         if self.jsonparser:
             arglist.append("-json")
         if DEBUG:
@@ -1200,6 +1203,9 @@ To include the contents of a file as commandline arguments, prefix the filename 
         interp_grp.add_argument("--interp_path", action="store", metavar="path", default="",
             help="Where to find the interpreter (a sensible default may be provided for some types)")
 
+        interp_grp.add_argument("--parser", action="store", metavar="path", default="",
+            help="Override path to parser (JSRef only)")
+
         interp_grp.add_argument("--interp_version", action="store", metavar="version", default="",
             help="The version of the interpreter you're running. (Default is type-specific, usually by executing the --version flag of the interpeter)")
 
@@ -1211,6 +1217,7 @@ To include the contents of a file as commandline arguments, prefix the filename 
 
         interp_grp.add_argument("--debug",action="store_true",
             help="Run JSRef with debugging flags (-print-heap -verbose -skip-init).")
+
 
         report_grp = argp.add_argument_group(title="Report Options")
         report_grp.add_argument("--webreport",action="store_true",
@@ -1316,6 +1323,7 @@ To include the contents of a file as commandline arguments, prefix the filename 
         if isinstance(interpreter, JSRef):
             interpreter.no_parasite = args.no_parasite
             interpreter.jsonparser = args.jsonparser
+            interpreter.set_parser(args.parser)
         interpreter.set_path(args.interp_path)
         interpreter.set_version(args.interp_version)
         interpreter.set_timeout(args.timeout)
