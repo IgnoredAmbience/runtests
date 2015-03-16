@@ -1053,9 +1053,10 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
             print >> sys.stderr, "Could not load modules required for Condor submit support (see --condor_help): %s" % e
             exit(1)
 
-    def condor_submit(self, job, machine_reqs, initial_args, verbose=False):
+    def condor_submit(self, job, machine_reqs, initial_args, random_sched, verbose=False):
         import htcondor
         import classad
+        import random
 
         batches = job.get_batches()
         n = len(batches)
@@ -1067,7 +1068,12 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
 
         # Fetch the name of this machine in the condor cluster
         coll = htcondor.Collector()
-        machine = coll.locate(htcondor.DaemonTypes.Startd)['Machine']
+        if random_sched:
+            sched_classad = random.choice(coll.locateAll(htcondor.DaemonTypes.Schedd))
+        else:
+            sched_classad =coll.locate(htcondor.DaemonTypes.Schedd)
+
+        machine = sched_classad['Machine']
         fsdomain = coll.query(
             htcondor.AdTypes.Startd,
             'Machine =?= "%s"' % machine,
@@ -1123,11 +1129,11 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
         env['BISECT_FILE'] = "bisect_$$([ClusterId])-$$([ProcId])-"
         c['Environment'] = " ".join(map(lambda it: "%s='%s'" % it, env.iteritems()))
 
-        sched = htcondor.Schedd()
+        sched = htcondor.Schedd(sched_classad)
         cluster_id = sched.submit(c, n)
 
         try:
-            job.condor_scheduler = coll.locate(htcondor.DaemonTypes.Schedd)['Machine']
+            job.condor_scheduler = machine
         except RuntimeError as e:
             print >> sys.stderr, "The Condor scheduler appears to have failed. You should probably run condor_restart."
             raise e
@@ -1262,6 +1268,9 @@ To include the contents of a file as commandline arguments, prefix the filename 
         condor_args.add_argument("--batch_size", action="store", metavar="n", default=-1, type=int,
             help="Number of testcases to run per Condor batch, if 0 run all tests in a single batch, otherwise run n tests per batch.")
 
+        condor_args.add_argument("--random_sched", action="store_true",
+            help="Use a random scheduler")
+
         condor_args.add_argument("--condor_run", action="store_true", help=argparse.SUPPRESS)
 
         condor_args.add_argument("--condor_help", action="store_true", help="Help on Condor setup")
@@ -1361,7 +1370,7 @@ To include the contents of a file as commandline arguments, prefix the filename 
         # Submit job to Condor?
         if args.condor:
             print "Submitting to Condor Scheduler"
-            n = self.condor_submit(job, args.condor_req, args, args.verbose)
+            n = self.condor_submit(job, args.condor_req, args, args.random_sched, args.verbose)
             dbmanager.update_object(job)
             dbmanager.disconnect()
             print ("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
