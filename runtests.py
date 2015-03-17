@@ -1371,10 +1371,10 @@ To include the contents of a file as commandline arguments, prefix the filename 
         if args.condor:
             print "Submitting to Condor Scheduler"
             n = self.condor_submit(job, args.condor_req, args, args.random_sched, args.verbose)
-            dbmanager.update_object(job)
-            dbmanager.disconnect()
             print ("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
                 (n, job.condor_cluster, job.condor_scheduler, job._dbid))
+            dbmanager.update_object(job)
+            dbmanager.disconnect()
             exit(0)
 
         # What other output handlers do we want to configure?
