@@ -1068,12 +1068,15 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
 
         # Fetch the name of this machine in the condor cluster
         coll = htcondor.Collector()
+        sched_classad = None
         if random_sched:
-            sched_classad = random.choice(coll.locateAll(htcondor.DaemonTypes.Schedd))
+            scheds = coll.locateAll(htcondor.DaemonTypes.Schedd)
+            scheds = [elem for elem in scheds if elem['DetectedMemory']>8000]
+            sched_classad = random.choice(scheds)
+            machine = sched_classad['Machine']
         else:
-            sched_classad =coll.locate(htcondor.DaemonTypes.Schedd)
+            machine = coll.locate(htcondor.DaemonTypes.Schedd)['Machine']
 
-        machine = sched_classad['Machine']
         fsdomain = coll.query(
             htcondor.AdTypes.Startd,
             'Machine =?= "%s"' % machine,
@@ -1097,13 +1100,13 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
         c['Iwd'] = os.getcwd()
 
         if verbose:
-            #c['Out'] = "condor_$$([ClusterId])-$$([ProcId]).out"
-            c['Err'] = "condor_logs/condor_$$([ClusterId])-$$([ProcId]).err"
-            #c['UserLog'] = "condor_$$([ClusterId]).log"
+            c['Out'] = "condor_logs/job_%s_condor_$$([ClusterId])-$$([ProcId]).out" % [job._dbid]
+            c['Err'] = "condor_logs/job_%s_condor_$$([ClusterId])-$$([ProcId]).err" % [job._dbid]
+            c['UserLog'] = "condor_logs/job_%s_condor_$$([ClusterId]).log" % [job._dbid]
 
         # Build argument string
         args_to_copy = ["db", "dbpath", "db_pg_schema", "interp", "interp_path",
-                        "interp_version", "no_parasite", "debug", "verbose", "timeout"]
+                        "interp_version", "no_parasite", "debug", "verbose", "timeout", "parser"]
 
         arguments = ["--condor_run"]
         initial_args = vars(initial_args)
@@ -1129,7 +1132,10 @@ Presently, the only way to interrogate the results is to perform SQL queries by 
         env['BISECT_FILE'] = "bisect_$$([ClusterId])-$$([ProcId])-"
         c['Environment'] = " ".join(map(lambda it: "%s='%s'" % it, env.iteritems()))
 
-        sched = htcondor.Schedd(sched_classad)
+        if sched_classad:
+            sched = htcondor.Schedd(sched_classad)
+        else:
+            sched = htcondor.Schedd()
         cluster_id = sched.submit(c, n)
 
         try:
