@@ -2,8 +2,11 @@
 
 module ResultsDB where
 
-import Database.HDBC.Sqlite3(connectSqlite3,Connection)
-import Database.HDBC(prepare,toSql,execute,fromSql,fetchRow)
+import Database.HDBC.Sqlite3(connectSqlite3)
+import qualified Database.HDBC.Sqlite3 as Sqlite3 (Connection)
+import Database.HDBC.PostgreSQL(connectPostgreSQL)
+import qualified Database.HDBC.PostgreSQL as PostgreSQL (Connection)
+import Database.HDBC(prepare,toSql,execute,fromSql,fetchRow,runRaw,IConnection)
 import Data.Maybe(fromJust)
 import System.Environment
 import System.FilePath((</>),(<.>),takeDirectory)
@@ -26,11 +29,17 @@ dbPathFromQueries = do
 dbPathFromTrunk :: IO FilePath
 dbPathFromTrunk = return $ "test_data" </> "test_results" <.> "db"
 
-getConnectionFromQueries :: IO Connection
+getConnectionFromQueries :: IO Sqlite3.Connection
 getConnectionFromQueries = connectSqlite3 =<< dbPathFromQueries
 
-getConnectionFromTrunk :: IO Connection
+getConnectionFromTrunk :: IO Sqlite3.Connection
 getConnectionFromTrunk = connectSqlite3 =<< dbPathFromTrunk
+
+getPostgresConnection :: IO PostgreSQL.Connection
+getPostgresConnection = do
+  con <- connectPostgreSQL =<< readFile ".pgconfig"
+  runRaw con "SET SCHEMA 'jscert'"
+  return con
 
 stmtMakeGroup :: String
 stmtMakeGroup = "INSERT INTO test_groups (description) VALUES (?)"
@@ -55,7 +64,7 @@ stmtGetLatestFailGroup = "SELECT id from fail_groups ORDER BY id DESC"
 
 
 -- Returns the ID of the group we created
-makeGroup :: String -> Connection -> IO Int
+makeGroup :: IConnection connection => String -> connection -> IO Int
 makeGroup desc con = do
       mkstmt <- prepare con stmtMakeGroup
       execute mkstmt [toSql desc]
@@ -64,7 +73,7 @@ makeGroup desc con = do
       fmap (fromSql.head.fromJust) $ fetchRow getstmt
 
 -- Returns the ID of the group we created
-makeFailGroup :: String -> String -> Connection -> IO Int
+makeFailGroup :: IConnection connection => String -> String -> connection -> IO Int
 makeFailGroup desc reason con = do
   mkFailGroup <- prepare con stmtMakeFailGroup
   execute mkFailGroup [toSql desc, toSql reason]
@@ -72,14 +81,14 @@ makeFailGroup desc reason con = do
   execute getLatestFailG []
   fmap (fromSql.head.fromJust) $ fetchRow getLatestFailG
 
-addFilesToSomeGroup :: String -> Int -> [String] -> Connection -> IO ()
+addFilesToSomeGroup :: IConnection connection => String -> Int -> [String] -> connection -> IO ()
 addFilesToSomeGroup stmtstr gid tids con = do
   stmt <- prepare con stmtstr
   let stmtargs = transpose [replicate (length tids) (toSql gid) , map toSql tids]
   mapM_ (execute stmt) stmtargs
 
-addFilesToGroup :: Int -> [String] -> Connection -> IO ()
+addFilesToGroup :: IConnection connection => Int -> [String] -> connection -> IO ()
 addFilesToGroup = addFilesToSomeGroup stmtAddFileToGroup
 
-addFilesToFailGroup :: Int -> [String] -> Connection -> IO ()
+addFilesToFailGroup :: IConnection connection => Int -> [String] -> connection -> IO ()
 addFilesToFailGroup = addFilesToSomeGroup stmtAddFileToFailGroup

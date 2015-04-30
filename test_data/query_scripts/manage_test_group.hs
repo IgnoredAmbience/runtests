@@ -2,9 +2,9 @@
 
 module Main where
 
-import ResultsDB(getConnectionFromTrunk,addFilesToGroup,makeGroup,makeFailGroup,addFilesToFailGroup)
+import ResultsDB(getConnectionFromTrunk,addFilesToGroup,makeGroup,makeFailGroup,addFilesToFailGroup,getPostgresConnection)
 import Database.HDBC(toSql,fromSql,withTransaction,prepare,execute,fetchRow,Statement)
-import Database.HDBC.Sqlite3(Connection)
+import Database.HDBC.Types(IConnection)
 import System.Console.CmdArgs
 import Data.Maybe
 import Control.Monad(void)
@@ -37,18 +37,18 @@ data ManageTestGroup = CreateGroup
 createDefaults :: ManageTestGroup
 createDefaults = CreateGroup
              { groupDescription  = "" &= help "A description of this test group"
-             , files = [] &= args
+             , files = [] &= typ "FILES" &= args
              }
 
 appendByDescDefaults :: ManageTestGroup
 appendByDescDefaults = AppendByDesc
                        { groupDescription = "" &= help "The description of the group to update"
-                       , files = [] &= args
+                       , files = [] &= typ "FILE" &= args
                        }
 appendByIdDefaults :: ManageTestGroup
 appendByIdDefaults = AppendById
                        { groupId = 0 &= help "The id of the group to update"
-                       , files = [] &= args
+                       , files = [] &= typ "FILEs" &= args
                        }
 amendDescDefaults :: ManageTestGroup
 amendDescDefaults = AmendDesc
@@ -60,7 +60,7 @@ cfgflbDefaults :: ManageTestGroup
 cfgflbDefaults = CreateFailGroup
                        { groupDescription = "" &= help "A description of this fail group"
                        , groupReason  = "" &= help "Why do these tests fail?"
-                       , fails = [] &= args
+                       , fails = [] &= typ "FAILS" &= args
                        }
 
 stmtUpdateDesc :: String
@@ -69,18 +69,18 @@ stmtUpdateDesc = "UPDATE test_groups SET description=? WHERE id=?"
 stmtGetGroupId :: String
 stmtGetGroupId = "SELECT id FROM test_groups WHERE description=?"
 
-updateDesc :: Int -> String -> Connection -> IO ()
+updateDesc :: IConnection connection => Int -> String -> connection -> IO ()
 updateDesc gid desc con = do
   stmt <- prepare con stmtUpdateDesc
   void $ execute stmt [toSql desc, toSql gid]
 
-getGroupId :: String -> Connection -> IO Int
+getGroupId :: IConnection connection => String -> connection -> IO Int
 getGroupId desc con = do
   stmt <- prepare con stmtGetGroupId
   execute stmt [toSql desc]
   fmap (fromSql.head.fromJust) $ fetchRow stmt
 
-dispatch :: ManageTestGroup -> Connection -> IO ()
+dispatch :: IConnection connection => ManageTestGroup -> connection -> IO ()
 dispatch (CreateGroup desc filenames) con = do
   gid <- makeGroup desc con
   addFilesToGroup gid filenames con
@@ -96,5 +96,5 @@ dispatch (CreateFailGroup desc reason filenames) con = do
 main :: IO ()
 main = do
   opts <- cmdArgs (modes [createDefaults,appendByDescDefaults, appendByIdDefaults,amendDescDefaults,cfgflbDefaults])
-  con <- getConnectionFromTrunk
+  con <- getPostgresConnection
   withTransaction con $ dispatch opts
