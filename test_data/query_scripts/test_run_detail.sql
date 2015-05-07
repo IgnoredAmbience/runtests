@@ -9,7 +9,7 @@ where
       test_runs.batch_id = test_batches.id
   AND test_runs.test_id = test_cases.id
 
-  AND test_batches.job_id = 155
+  AND test_batches.job_id = 159
   /*AND test_cases.chapter1 >= 8 AND test_cases.chapter1 <= 14*/
   /*AND test_runs.result <> 'PASS'*/
   AND test_cases.chapter1 = 15 and test_cases.chapter2 = 4

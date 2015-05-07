@@ -9,9 +9,8 @@ FROM
 WHERE 
   test_runs.batch_id = test_batches.id
   AND test_runs.test_id = test_cases.id
-  AND test_batches.job_id in (36, 117, 156)
-  AND test_cases.chapter1 > 7 AND test_cases.chapter1 < 15
-  AND test_runs.test_id in (select test_id from jscert.test_group_memberships where group_id = 1)
+  AND test_batches.job_id = 159
+  AND test_runs.test_id in (select test_id from jscert.test_group_memberships where group_id > 2)
 GROUP BY
   test_batches.job_id,
   test_runs.result
