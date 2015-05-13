@@ -18,7 +18,7 @@ test_id in
   where
         test_id = test_cases.id
     and batch_id = test_batches.id
-    and test_batches.job_id = 155
+    and test_batches.job_id = 159
     and test_cases.chapter1 >=8 and test_cases.chapter1 <= 14
     and result = 'PASS'
 ) INTERSECT (

@@ -17,8 +17,9 @@ WHERE
   test_runs.batch_id = test_batches.id
   AND test_jobs.id = test_batches.job_id
   AND test_cases.id = test_runs.test_id
-  AND test_jobs.title NOT LIKE 'bad%'
-  AND test_cases.chapter1 > 7 AND test_cases.chapter1 < 15
+  /*AND test_cases.chapter1 > 7 AND test_cases.chapter1 < 15*/
+  AND test_cases.chapter1 = 15 AND test_cases.chapter2 = 4
+  AND test_jobs.id IN (117, 155, 159, 160)
 GROUP BY
   test_jobs.id
 HAVING
