@@ -1,3 +1,4 @@
+from __future__ import print_function
 import getpass
 import os
 import time
@@ -45,6 +46,7 @@ class CLIResultPrinter(TestResultHandler):
     ABANDON = "\033[33m"
 
     verbose = False
+    failed = True
 
     def __init__(self, verbose=False):
         self.verbose = verbose
@@ -62,35 +64,36 @@ class CLIResultPrinter(TestResultHandler):
         elif testcase.timeout():
             self.print_abandon("Timed out...")
         else:
-            print self.ABANDON+"Something really weird happened"+self.NORMAL
+            self.print_abandon("Something really weird happened")
+
         if self.verbose:
-            print "Exit code: %s" % (testcase.exit_code,)
-            print "Test is negative? %s" % (testcase.is_negative(),)
-            print "=== STDOUT ==="
-            print testcase.stdout
-            print "=== STDERR ==="
-            print testcase.stderr
+            print("Exit code: %s" % (testcase.exit_code,))
+            print("Test is negative? %s" % (testcase.is_negative(),))
+            print("=== STDOUT ===")
+            print(testcase.stdout)
+            print("=== STDERR ===")
+            print(testcase.stderr)
 
     def print_heading(self,s):
-        print self.HEADING+s+self.NORMAL
+        print(self.HEADING+s+self.NORMAL)
     def print_pass(self,s):
-        print self.PASS+s+self.NORMAL
+        print(self.PASS+s+self.NORMAL)
     def print_fail(self,s):
-        print self.FAIL+s+self.NORMAL
+        print(self.FAIL+s+self.NORMAL)
     def print_abandon(self,s):
-        print self.ABANDON+s+self.NORMAL
+        print(self.ABANDON+s+self.NORMAL)
 
     def finish_batch(self, batch):
         if len(batch.failed_tests) > 0:
             self.failed = True
-            print "The following tests failed:"
+            print("The following tests failed:")
             for failure in batch.failed_tests:
-                print failure.filename
+                print(failure.filename)
         if len(batch.aborted_tests) > 0:
             self.failed = True
-            print "The following tests were abandoned"
+            print("The following tests were abandoned")
             for abandoned in batch.aborted_tests:
-                print abandoned.filename
+                print(abandoned.filename)
         print ("There were %d passes, %d fails, and %d abandoned tests." %
             (len(batch.passed_tests), len(batch.failed_tests), len(batch.aborted_tests)))
 

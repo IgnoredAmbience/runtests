@@ -1,3 +1,5 @@
+from __future__ import print_function
+import logging
 import os
 import random
 import sys
@@ -11,7 +13,7 @@ except ImportError as e:
 
 class Condor(object):
     def condor_help(self):
-        print """
+        help_msg = """
 Condor Help
 
 This script is able to submit test run jobs to Condor, results may only be
@@ -56,13 +58,15 @@ Presently, the only way to interrogate the results is to perform SQL queries by
 hand. The analysis scripts haven't yet been updated to support the new database
 schema.
 """
-        print "Testing Condor Python bindings: "
+        print(help_msg)
+        print("Testing Condor Python bindings: ")
         self.condor_test_import()
-        print "OK!"
+        print("OK!")
 
     def condor_test_import(self):
         if not (classad or htcondor):
-            print >> sys.stderr, "Could not load modules required for Condor submit support (see --condor_help): %s" % condor_import_error
+            logging.error("Could not load modules required for Condor submit support (see --condor_help): %s",
+                    condor_import_error)
             exit(1)
 
     def condor_submit(self, job, machine_reqs, initial_args, random_sched, verbose=False):
@@ -128,8 +132,7 @@ schema.
 
         argstr =  ' '.join(arguments)
         c['Arguments'] = argstr
-        if verbose:
-            print "Using argstr: %s" % argstr
+        logging.debug("Using argstr: %s" % argstr)
 
         # Build the environment
         env = dict(os.environ)
@@ -149,16 +152,11 @@ schema.
         try:
             job.condor_scheduler = machine
         except RuntimeError as e:
-            print >> sys.stderr, "The Condor scheduler appears to have failed. You should probably run condor_restart."
+            logging.error("The Condor scheduler appears to have failed. You should probably run condor_restart.")
             raise e
         job.condor_cluster = cluster_id
 
         return n
-
-    def condor_run_diags(self):
-        print "Argv: %s" % sys.argv
-        print "Cwd: %s" % os.getcwd()
-        print "Env: %s" % os.environ
 
     def condor_update_job(self, job, dbmanager):
         job._dbid = int(os.environ['_RUNTESTS_JOBID'])

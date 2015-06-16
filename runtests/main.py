@@ -4,19 +4,19 @@ A not-so-mini test harness. Runs all the files you specify through an interprete
 you specify, and collates the exit codes for you. Call with the -h switch to
 find out about options.
 """
+from __future__ import print_function
 import argparse
+import logging
 import os
 import signal
+
+JSCERT_ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from condor import *
 from core import *
 from db import *
 from interpreter import *
 from resulthandler import *
-
-JSCERT_ROOT_DIR = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
-DEBUG=False
-VERBOSE=False
 
 # FIXME: This shouldn't really inherit from Condor...
 class Runtests(Condor):
@@ -92,10 +92,10 @@ class Runtests(Condor):
 
     def interrupt_handler(self,signal,frame):
         if self.interrupted:
-            print "Terminating, please be patient..."
+            logging.warning("Terminating, please be patient...")
             return
 
-        print "Interrupted... Running pending output actions"
+        logging.warning("Interrupted... Running pending output actions")
         self.interrupted = True
 
         for handler in self.handlers:
@@ -150,10 +150,7 @@ To include the contents of a file as commandline arguments, prefix the filename 
             help="Use the JSON parser (Esprima) when running tests.")
 
         interp_grp.add_argument("--no_parasite",action="store_true",
-            help="Run JSRef with -no-parasite flag (the options --debug and --verbose might be useless in this mode).")
-
-        interp_grp.add_argument("--debug",action="store_true",
-            help="Run JSRef with debugging flags (-print-heap -verbose -skip-init).")
+            help="Run JSRef with -no-parasite flag")
 
 
         report_grp = argp.add_argument_group(title="Report Options")
@@ -169,8 +166,8 @@ To include the contents of a file as commandline arguments, prefix the filename 
         report_grp.add_argument("--noindex",action="store_true",
             help="Don't attempt to build an index.html for the reportdir")
 
-        argp.add_argument("--verbose",action="store_true",
-            help="Print the output of the tests as they happen.")
+        argp.add_argument("--verbose", '-v', action="count",
+            help="Print the output of the tests as they happen. Pass multiple times for more verbose output.")
 
 
         # Database config
@@ -212,10 +209,8 @@ To include the contents of a file as commandline arguments, prefix the filename 
         argp = self.build_arg_parser()
         args = argp.parse_args()
 
-        global VERBOSE
-        global DEBUG
-        VERBOSE = args.verbose
-        DEBUG = args.debug
+        log_level = logging.DEBUG if args.verbose > 1 else logging.WARNING
+        logging.basicConfig(level=log_level)
 
         if args.condor_help:
             self.condor_help()
@@ -225,9 +220,6 @@ To include the contents of a file as commandline arguments, prefix the filename 
             self.condor_test_import()
             if not args.db:
                 raise Exception("A database is required to store condor results in")
-
-        if args.condor_run and args.verbose:
-            self.condor_run_diags()
 
         if args.db:
             if args.db == "sqlite":
@@ -251,7 +243,7 @@ To include the contents of a file as commandline arguments, prefix the filename 
             if args.db_init:
                 dbmanager.connect()
                 dbmanager.import_schema()
-                print "Database created successfully"
+                print("Database created successfully")
                 exit(0)
 
             self.add_handler(dbmanager)
@@ -270,12 +262,12 @@ To include the contents of a file as commandline arguments, prefix the filename 
         # Generate testcases
         testcases = self.get_testcases_from_paths(args.filenames, exclude=args.exclude)
         if dbmanager and not args.condor_run:
-            print "Preloading test-cases into database..."
+            print("Preloading test-cases into database...")
             dbmanager.connect()
             dbmanager.insert_testcases(testcases) # auto-commits
-            print "Done!"
+            print("Done!")
 
-        print "Building job..."
+        print("Building job...")
         # Build job
         job = Job(args.title, args.note, interpreter)
 
@@ -288,27 +280,27 @@ To include the contents of a file as commandline arguments, prefix the filename 
             job.batch_size = args.batch_size
 
         job.add_testcases(testcases)
-        print "Done! %s test batches created." % job.get_batch_count()
+        print("Done! %s test batches created." % job.get_batch_count())
 
         # Insert it all into the database
         if not args.condor_run:
             if dbmanager:
-                print "Inserting job into database..."
+                print("Inserting job into database...")
                 dbmanager.create_job_batches_runs(job)
-                print "Done!"
+                print("Done!")
 
         # Submit job to Condor?
         if args.condor:
-            print "Submitting to Condor Scheduler"
+            print("Submitting to Condor Scheduler")
             n = self.condor_submit(job, args.condor_req, args, args.random_sched, args.verbose)
-            print ("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
+            print("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
                 (n, job.condor_cluster, job.condor_scheduler, job._dbid))
             dbmanager.update_object(job)
             dbmanager.disconnect()
             exit(0)
 
         # What other output handlers do we want to configure?
-        cli = CLIResultPrinter(args.verbose or args.debug)
+        cli = CLIResultPrinter(args.verbose)
         self.add_handler(cli)
         if args.webreport:
             self.add_handler(WebResultPrinter(args.templatedir, args.reportdir, args.noindex))

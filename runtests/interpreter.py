@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import sys
@@ -9,7 +10,7 @@ if sys.version_info < (3, 3):
 else:
     import subprocess
 
-from main import JSCERT_ROOT_DIR, DEBUG, VERBOSE
+from main import JSCERT_ROOT_DIR
 
 class Interpreter(object):
     """Base class for Interpreter calling methods"""
@@ -104,6 +105,7 @@ class Interpreter(object):
 
         self.setup()
         command = self.build_args(testcase)
+        logging.debug("Calling interpreter with the command: %s", command)
 
         testcase.start_timer()
         test_pipe = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -200,10 +202,10 @@ class JSRef(Interpreter):
         arglist = [self.path, "-jsparser", self.parser_path]
         if self.jsonparser:
             arglist.append("-json")
-        if DEBUG:
-            arglist.append("-print-heap")
-            arglist.append("-verbose")
-            arglist.append("-skip-init")
+        #if DEBUG:
+        #    arglist.append("-print-heap")
+        #    arglist.append("-verbose")
+        #    arglist.append("-skip-init")
         arglist.append("-test_prelude")
         arglist.append(self.get_filepath("interp","test_prelude.js"))
         if testcase.isLambdaS5Test():
@@ -221,8 +223,6 @@ class JSRef(Interpreter):
             arglist.append("-file")
             arglist.append(self.get_filepath(testcase.get_realpath()))
         elif testcase.usesInclude():
-            if VERBOSE or DEBUG:
-                print "Using include libs."
             arglist.append("-test_prelude")
             arglist.append(self.get_filepath("interp/libloader.js"))
             arglist.append("-file")
