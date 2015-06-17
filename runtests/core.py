@@ -16,6 +16,7 @@ from db import DBObject
 from interpreter import Interpreter
 from main import JSCERT_ROOT_DIR
 
+
 class Timer(object):
     start_time = datetime.min
     stop_time = datetime.min
@@ -32,7 +33,9 @@ class Timer(object):
     def get_duration(self):
         return self.get_delta().total_seconds()
 
+
 class TestCase(Timer, DBObject):
+
     """
     A test case knows what file it came from, whether it has been run and if so,
     whether it passed, failed or aborted, and what output it generated along the way.
@@ -46,7 +49,7 @@ class TestCase(Timer, DBObject):
     FAIL = 2
     ABORT = 3
     TIMEOUT = 4
-    RESULT_TEXT = ["UNKNOWN","PASS","FAIL","ABORT","TIMEOUT"]
+    RESULT_TEXT = ["UNKNOWN", "PASS", "FAIL", "ABORT", "TIMEOUT"]
 
     filename = ""
     negative = False   # Whether the testcase is expected to fail
@@ -70,7 +73,8 @@ class TestCase(Timer, DBObject):
                 # If so, we will need to invert the return value later on.
                 buf = f.read()
                 self.negative = "@negative" in buf
-                self.includes = re.findall('\$INCLUDE\([\'"]([^\)]+)[\'"]\)', buf)
+                self.includes = re.findall(
+                    '\$INCLUDE\([\'"]([^\)]+)[\'"]\)', buf)
 
     def set_result(self, interp_result, exit_code, stdout, stderr):
         self.interp_result = interp_result
@@ -162,7 +166,9 @@ class TestCase(Timer, DBObject):
     def isSpiderMonkeyTest(self):
         return self.get_relpath().startswith("tests/SpiderMonkey/")
 
+
 class Job(DBObject):
+
     """Information about a particular test job"""
     _table = "test_jobs"
     title = ""
@@ -198,7 +204,8 @@ class Job(DBObject):
         self.new_batch()
 
     def set_repo_version(self):
-        out = subprocess.check_output(["git","rev-parse","HEAD"], cwd=JSCERT_ROOT_DIR)
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=JSCERT_ROOT_DIR)
         self.repo_version = out.strip()
 
     def new_batch(self):
@@ -232,6 +239,7 @@ class Job(DBObject):
 
 
 class TestBatch(Timer, DBObject):
+
     """Information about a particular test batch"""
     _table = "test_batches"
     job = None
@@ -284,7 +292,8 @@ class TestBatch(Timer, DBObject):
         return self.passed_tests + self.failed_tests + self.aborted_tests
 
     def set_machine_details(self):
-        (self.system, self.osnodename, self.osrelease, self.osversion, self.hardware) = os.uname()
+        (self.system, self.osnodename, self.osrelease,
+         self.osversion, self.hardware) = os.uname()
 
     def test_finished(self, testcase):
         if testcase.passed():
@@ -309,9 +318,9 @@ class TestBatch(Timer, DBObject):
                 "numpasses": len(self.passed_tests),
                 "numfails": len(self.failed_tests),
                 "numaborts": len(self.aborted_tests),
-                "aborts": map(lambda x:x.report_dict() , self.aborted_tests),
-                "failures": map(lambda x:x.report_dict() , self.failed_tests),
-                "passes": map(lambda x:x.report_dict() , self.passed_tests)}
+                "aborts": map(lambda x: x.report_dict(), self.aborted_tests),
+                "failures": map(lambda x: x.report_dict(), self.failed_tests),
+                "passes": map(lambda x: x.report_dict(), self.passed_tests)}
 
     def _db_dict(self):
         d = {"system": self.system,
@@ -325,4 +334,3 @@ class TestBatch(Timer, DBObject):
         if self.job != None:
             d['job_id'] = self.job._dbid
         return d
-

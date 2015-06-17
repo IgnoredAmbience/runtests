@@ -11,7 +11,9 @@ except ImportError as e:
     classad = htcondor = None
     condor_import_error = e
 
+
 class Condor(object):
+
     def condor_help(self):
         help_msg = """
 Condor Help
@@ -66,7 +68,7 @@ schema.
     def condor_test_import(self):
         if not (classad or htcondor):
             logging.error("Could not load modules required for Condor submit support (see --condor_help): %s",
-                    condor_import_error)
+                          condor_import_error)
             exit(1)
 
     def condor_submit(self, job, machine_reqs, initial_args, random_sched, verbose=False):
@@ -75,15 +77,17 @@ schema.
 
         batch_ids = map(lambda b: b._dbid, batches)
         batch_tcs = map(lambda b: b.get_testcases(), batches)
-        tc_paths = map(lambda tcs: " ".join(map(lambda t: t.get_relpath(), tcs)), batch_tcs)
-        tc_ids = map(lambda tcs: ",".join(map(lambda t: str(t._dbid), tcs)), batch_tcs)
+        tc_paths = map(
+            lambda tcs: " ".join(map(lambda t: t.get_relpath(), tcs)), batch_tcs)
+        tc_ids = map(
+            lambda tcs: ",".join(map(lambda t: str(t._dbid), tcs)), batch_tcs)
 
         # Fetch the name of this machine in the condor cluster
         coll = htcondor.Collector()
         sched_classad = None
         if random_sched:
             scheds = coll.locateAll(htcondor.DaemonTypes.Schedd)
-            scheds = [elem for elem in scheds if elem['DetectedMemory']>8000]
+            scheds = [elem for elem in scheds if elem['DetectedMemory'] > 8000]
             sched_classad = random.choice(scheds)
             machine = sched_classad['Machine']
         else:
@@ -112,9 +116,12 @@ schema.
         c['Iwd'] = os.getcwd()
 
         if verbose:
-            c['Out'] = "condor_logs/job_%s_condor_$$([ClusterId])-$$([ProcId]).out" % [job._dbid]
-            c['Err'] = "condor_logs/job_%s_condor_$$([ClusterId])-$$([ProcId]).err" % [job._dbid]
-            c['UserLog'] = "condor_logs/job_%s_condor_$$([ClusterId]).log" % [job._dbid]
+            c['Out'] = "condor_logs/job_%s_condor_$$([ClusterId])-$$([ProcId]).out" % [
+                job._dbid]
+            c['Err'] = "condor_logs/job_%s_condor_$$([ClusterId])-$$([ProcId]).err" % [
+                job._dbid]
+            c['UserLog'] = "condor_logs/job_%s_condor_$$([ClusterId]).log" % [
+                job._dbid]
 
         # Build argument string
         args_to_copy = ["db", "dbpath", "db_pg_schema", "interp", "interp_path",
@@ -130,7 +137,7 @@ schema.
                     arguments.append("'%s'" % val)
         arguments.append("$$([tests[ProcId]])")
 
-        argstr =  ' '.join(arguments)
+        argstr = ' '.join(arguments)
         c['Arguments'] = argstr
         logging.debug("Using argstr: %s" % argstr)
 
@@ -141,7 +148,8 @@ schema.
         env['_RUNTESTS_BATCHID'] = "$$([batchids[ProcId]])"
         env['_RUNTESTS_TESTIDS'] = "$$([testids[ProcId]])"
         env['BISECT_FILE'] = "bisect_$$([ClusterId])-$$([ProcId])-"
-        c['Environment'] = " ".join(map(lambda it: "%s='%s'" % it, env.iteritems()))
+        c['Environment'] = " ".join(
+            map(lambda it: "%s='%s'" % it, env.iteritems()))
 
         if sched_classad:
             sched = htcondor.Schedd(sched_classad)
@@ -152,7 +160,8 @@ schema.
         try:
             job.condor_scheduler = machine
         except RuntimeError as e:
-            logging.error("The Condor scheduler appears to have failed. You should probably run condor_restart.")
+            logging.error(
+                "The Condor scheduler appears to have failed. You should probably run condor_restart.")
             raise e
         job.condor_cluster = cluster_id
 

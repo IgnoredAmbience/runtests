@@ -12,7 +12,9 @@ else:
 
 from main import JSCERT_ROOT_DIR
 
+
 class Interpreter(object):
+
     """Base class for Interpreter calling methods"""
     pass_code = 0
     fail_code = 1
@@ -40,7 +42,8 @@ class Interpreter(object):
     @classmethod
     def Types(cls):
         # pylint: disable=no-member
-        interps = map(lambda c: c.__name__.lower(), Interpreter.__subclasses__())
+        interps = map(
+            lambda c: c.__name__.lower(), Interpreter.__subclasses__())
         interps.append("generic")
         return interps
 
@@ -87,6 +90,7 @@ class Interpreter(object):
         return [self.path, testcase.get_realpath()]
 
     """Get path to an input file, copying it to temporary storage to prevent race conditons, if required"""
+
     def get_filepath(self, path, *paths):
         filepath = os.path.join(path, *paths)
 
@@ -108,26 +112,27 @@ class Interpreter(object):
         logging.debug("Calling interpreter with the command: %s", command)
 
         testcase.start_timer()
-        test_pipe = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        test_pipe = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
-            output,errors = test_pipe.communicate(timeout=self.timeout)
+            output, errors = test_pipe.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired:
             test_pipe.kill()
-            output,errors = test_pipe.communicate()
+            output, errors = test_pipe.communicate()
             result = Interpreter.TIMEOUT
         testcase.stop_timer()
 
-        output = output.decode("utf8").encode("ascii","xmlcharrefreplace")
-        errors = errors.decode("utf8").encode("ascii","xmlcharrefreplace")
+        output = output.decode("utf8").encode("ascii", "xmlcharrefreplace")
+        errors = errors.decode("utf8").encode("ascii", "xmlcharrefreplace")
         ret = test_pipe.returncode
         if not result:
-            result = self.determine_result(testcase,ret,output,errors)
+            result = self.determine_result(testcase, ret, output, errors)
 
         self.teardown()
 
         testcase.set_result(result, ret, output, errors)
 
-    def determine_result(self,testcase,ret,out,err):
+    def determine_result(self, testcase, ret, out, err):
         """Returns TestCase.{PASS,FAIL,ABORT} to indicate how the interpreter responded"""
         if ret == self.pass_code:
             return Interpreter.PASS
@@ -139,6 +144,7 @@ class Interpreter(object):
     def teardown(self):
         pass
 
+
 class Spidermonkey(Interpreter):
     fail_code = 3
     arg_name = "spidermonkey"
@@ -146,12 +152,14 @@ class Spidermonkey(Interpreter):
     def get_name(self):
         return "SpiderMonkey"
 
+
 class NodeJS(Interpreter):
     path = "/usr/bin/nodejs"
     arg_name = "node"
 
     def get_name(self):
         return "node.js"
+
 
 class LambdaS5(Interpreter):
     current_dir = ""
@@ -171,10 +179,11 @@ class LambdaS5(Interpreter):
     def teardown(self):
         os.chdir(self.current_dir)
 
+
 class JSRef(Interpreter):
     interp_dir = os.path.join(JSCERT_ROOT_DIR, "interp")
     path = os.path.join(interp_dir, "run_js")
-    parser_path = os.path.join(interp_dir,"parser","lib","js_parser.jar")
+    parser_path = os.path.join(interp_dir, "parser", "lib", "js_parser.jar")
     arg_name = "jsref"
     no_parasite = False
     jsonparser = False
@@ -202,12 +211,12 @@ class JSRef(Interpreter):
         arglist = [self.path, "-jsparser", self.parser_path]
         if self.jsonparser:
             arglist.append("-json")
-        #if DEBUG:
+        # if DEBUG:
         #    arglist.append("-print-heap")
         #    arglist.append("-verbose")
         #    arglist.append("-skip-init")
         arglist.append("-test_prelude")
-        arglist.append(self.get_filepath("interp","test_prelude.js"))
+        arglist.append(self.get_filepath("interp", "test_prelude.js"))
         if testcase.isLambdaS5Test():
             arglist.append("-test_prelude")
             arglist.append(self.get_filepath("tests/LambdaS5/lambda-pre.js"))
@@ -217,9 +226,11 @@ class JSRef(Interpreter):
             arglist.append(self.get_filepath("tests/LambdaS5/lambda-post.js"))
         elif testcase.isSpiderMonkeyTest():
             arglist.append("-test_prelude")
-            arglist.append(self.get_filepath("interp/test_prelude_SpiderMonkey.js"))
+            arglist.append(
+                self.get_filepath("interp/test_prelude_SpiderMonkey.js"))
             arglist.append("-test_prelude")
-            arglist.append(self.get_filepath("tests/SpiderMonkey/tests/shell.js"))
+            arglist.append(
+                self.get_filepath("tests/SpiderMonkey/tests/shell.js"))
             arglist.append("-file")
             arglist.append(self.get_filepath(testcase.get_realpath()))
         elif testcase.usesInclude():

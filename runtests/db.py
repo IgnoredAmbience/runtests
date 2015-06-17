@@ -9,7 +9,9 @@ except ImportError:
 from resulthandler import TestResultHandler
 from main import JSCERT_ROOT_DIR
 
-DB_SCHEMA_LOCATION = os.path.join(JSCERT_ROOT_DIR, 'test_data', 'createTestDB.sql')
+DB_SCHEMA_LOCATION = os.path.join(
+    JSCERT_ROOT_DIR, 'test_data', 'createTestDB.sql')
+
 
 class DBManager(TestResultHandler):
     conn = None
@@ -109,7 +111,8 @@ class DBManager(TestResultHandler):
     def update_many(self, table, coll):
         """Expects dbid to be set on all dicts being passed in for updating"""
         assigns = self.build_fields_update(coll[0].keys())
-        sql = ("UPDATE %s SET %s WHERE id = %s" % (table, assigns, self.subst_pattern("id")))
+        sql = ("UPDATE %s SET %s WHERE id = %s" %
+               (table, assigns, self.subst_pattern("id")))
         self.cur.executemany(sql, coll)
 
     def update_object(self, obj):
@@ -140,10 +143,13 @@ class DBManager(TestResultHandler):
     def subst_pattern(self, field):
         raise NotImplementedError
 
+
 class SQLiteDBManager(DBManager):
+
     def __init__(self, path, initing=False):
         if not initing and not os.path.isfile(path):
-            raise Exception("Database not found at %s\nPlease create the database using --db_init before using it." % path)
+            raise Exception(
+                "Database not found at %s\nPlease create the database using --db_init before using it." % path)
         self.conn = sqlite3.connect(path)
         self.cur = self.conn.cursor()
 
@@ -159,12 +165,14 @@ class SQLiteDBManager(DBManager):
     def insert_ignore_many(self, table, coll):
         """Insert or ignore rows with colliding ID and commits"""
         (fnames, fsubst) = self.build_fields_insert(coll[0].keys())
-        sql = ("INSERT OR IGNORE INTO %s (%s) VALUES (%s)" % (table, fnames, fsubst))
+        sql = ("INSERT OR IGNORE INTO %s (%s) VALUES (%s)" %
+               (table, fnames, fsubst))
         self.cur.executemany(sql, coll)
         self.conn.commit()
 
     def execute_script(self, sql):
         self.cur.executescript(sql)
+
 
 class PostgresDBManager(DBManager):
     connstr = ""
@@ -198,7 +206,8 @@ class PostgresDBManager(DBManager):
 
     def insert(self, table, dic):
         (fnames, fsubst) = self.build_fields_insert(dic.keys())
-        sql = ("INSERT INTO %s (%s) VALUES (%s) RETURNING id" % (table, fnames, fsubst))
+        sql = ("INSERT INTO %s (%s) VALUES (%s) RETURNING id" %
+               (table, fnames, fsubst))
         self.cur.execute(sql, dic)
         return self.cur.fetchone()[0]
 
@@ -222,6 +231,7 @@ class PostgresDBManager(DBManager):
         sql = re.sub(r"(.*)integer(.*) autoincrement", r"\1serial\2", sql)
         return sql
 
+
 class DBObject(object):
     _table = ""
     _dbid = 0
@@ -234,4 +244,3 @@ class DBObject(object):
 
     def _db_dict(self):
         raise NotImplementedError
-
