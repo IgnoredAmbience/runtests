@@ -20,6 +20,10 @@ class TestResultHandler(object):
     A test job is a collection of test batches, it may only use one interpreter
     """
 
+    def start_job(self, job):
+        """Called when a job begins executing"""
+        pass
+
     def start_batch(self, batch):
         """Called before the first test is run from a particular batch"""
         pass
@@ -36,7 +40,11 @@ class TestResultHandler(object):
         """Called after the last test from a batch is run"""
         pass
 
-    def interrupt_handler(self, signal, frame):
+    def finish_job(self, job):
+        """Called once a job has finished running"""
+        pass
+
+    def interrupt_handler(self):
         """Called on a handler when the test run is terminating due to SIGINT"""
         pass
 

@@ -13,31 +13,19 @@ import signal
 JSCERT_ROOT_DIR = os.path.realpath(
     os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from condor import *
-from core import *
-from db import *
-from interpreter import *
-from resulthandler import *
+from .condor import *
+from .core import *
+from .db import *
+from .interpreter import *
+from .resulthandler import *
 
-# FIXME: This shouldn't really inherit from Condor...
-
-
-class Runtests(Condor):
+class Runtests(object):
 
     """Main class"""
 
-    handlers = None
     db = None
 
     interrupted = False
-
-    def __init__(self,):
-        self.handlers = []
-
-    def add_handler(self, handler):
-        if not isinstance(handler, TestResultHandler):
-            raise TypeError("%s is not a TestResultHandler" % (handler,))
-        self.handlers.append(handler)
 
     def get_testcases_from_paths(self, paths, testcases=[], exclude=[]):
         return reduce(
@@ -66,33 +54,6 @@ class Runtests(Condor):
                     testcases.append(TestCase(filename))
         return testcases
 
-    def run(self, batch):
-        batch.set_machine_details()
-        batch.start_timer()
-
-        for handler in self.handlers:
-            handler.start_batch(batch)
-
-        # Now let's get down to the business of running the tests
-        while batch.has_testcase():
-            testcase = batch.get_testcase()
-            for handler in self.handlers:
-                handler.start_test(testcase)
-
-            batch.job.interpreter.run_test(testcase)
-
-            batch.test_finished(testcase)
-
-            # Inform handlers of a test result
-            # We share the same TestResult among handlers
-            for handler in self.handlers:
-                handler.finish_test(testcase)
-
-        batch.stop_timer()
-
-        # Tell handlers that we're done
-        for handler in self.handlers:
-            handler.finish_batch(batch)
 
     def interrupt_handler(self, signal, frame):
         if self.interrupted:
@@ -101,9 +62,8 @@ class Runtests(Condor):
 
         logging.warning("Interrupted... Running pending output actions")
         self.interrupted = True
+        self.executor.stop()
 
-        for handler in self.handlers:
-            handler.interrupt_handler(signal, frame)
         exit(1)
 
     def build_arg_parser(self):
@@ -113,41 +73,59 @@ class Runtests(Condor):
             description="""Run some tests with some JS implementation: by default, with JSRef.
 
 Most options below should be self explanatory.
-This script also can generate html reports of the test jobs and log test results into a database (Postgres or SQLite) for further analysis.
+This script also can generate html reports of the test jobs and log test results into a database
+(Postgres or SQLite) for further analysis.
 
-Testcases can either be run sequentially on the local machine or scheduled to run in parallel on a Condor computing cluster.
+Testcases can either be run sequentially on the local machine or scheduled to run in parallel on
+a Condor computing cluster.
 
 To include the contents of a file as commandline arguments, prefix the filename using the @ character.
 """)
 
         argp.add_argument("filenames", metavar="path", nargs="*",
-                          help="The test file or directory we want to run. Directory names will recusively run all .js files.")
-
-        argp.add_argument("--title", action="store", metavar="string", default="",
-                          help="Optional title for this test. Will be used in the report filename, so no spaces please!")
-
-        argp.add_argument("--note", action="store", metavar="string", default="",
-                          help="Optional explanatory note to be added to the test report.")
+                          help="The test file or directory we want to run. If a directory is "
+                          "provided, .js files will be searched for recursively.")
 
         argp.add_argument("--timeout", action="store", metavar="timeout", type=int, default=None,
                           help="Timeout in seconds for each testcase, defaults to None.")
 
-        argp.add_argument("--exclude", action="append", metavar="file", type=os.path.realpath, default=[],
-                          help="Files in test tree to exlude from testing")
+        argp.add_argument("--exclude", action="append", metavar="file", type=os.path.realpath,
+                          default=[], help="Files in test tree to exlude from testing")
+
+        argp.add_argument("--verbose", '-v', action="count",
+                          help="Print the output of the tests as they happen. Pass multiple times "
+                          "for more verbose output.")
+
+        # Test batching
+        batching = argp.add_mutually_exclusive_group()
+        batching.add_argument("--batch_size", action="store", metavar="n", default=0, type=int,
+                              help="Number of testcases to run per batch")
+
+        batching.add_argument("--batch_count", action="store", metavar="n", default=0, type=int,
+                              help="Number of batches of testcases to run, tests will be "
+                              "distributed evenly across all batches")
+
+        # Test Job information
+        jobinfo = argp.add_argument_group(title="Test job metadata")
+        jobinfo.add_argument("--title", action="store", metavar="string", default="",
+                             help="Optional title for this test.")
+
+        jobinfo.add_argument("--note", action="store", metavar="string", default="",
+                             help="Optional explanatory note to be added to the test report.")
 
         interp_grp = argp.add_argument_group(title="Interpreter options")
-        jsr = JSRef()
-        interp_grp.add_argument("--interp", action="store", choices=Interpreter.Types(), default="jsref",
-                                help="Interpreter type (default: jsref)")
+        interp_grp.add_argument("--interp", action="store", choices=Interpreter.Types(),
+                                default="jsref", help="Interpreter type (default: jsref)")
 
         interp_grp.add_argument("--interp_path", action="store", metavar="path", default="",
-                                help="Where to find the interpreter (a sensible default may be provided for some types)")
+                                help="Path to the interpreter (some types have default values)")
 
         interp_grp.add_argument("--parser", action="store", metavar="path", default="",
                                 help="Override path to parser (JSRef only)")
 
         interp_grp.add_argument("--interp_version", action="store", metavar="version", default="",
-                                help="The version of the interpreter you're running. (Default is type-specific, usually by executing the --version flag of the interpeter)")
+                                help="The version of the interpreter you're running. (optional, "
+                                "value will be auto-detected if not provided)")
 
         interp_grp.add_argument("--jsonparser", action="store_true",
                                 help="Use the JSON parser (Esprima) when running tests.")
@@ -157,19 +135,19 @@ To include the contents of a file as commandline arguments, prefix the filename 
 
         report_grp = argp.add_argument_group(title="Report Options")
         report_grp.add_argument("--webreport", action="store_true",
-                                help="Produce a web-page of your results in the default web directory. Requires pystache.")
+                                help="Produce a web-page of your results in the default web "
+                                "directory. Requires pystache.")
 
-        report_grp.add_argument("--templatedir", action="store", metavar="path", default=os.path.join("test_reports"),
+        report_grp.add_argument("--templatedir", action="store", metavar="path",
+                                default=os.path.join("test_reports"),
                                 help="Where to find our web-templates when producing reports")
 
-        report_grp.add_argument("--reportdir", action="store", metavar="path", default=os.path.join("test_reports"),
+        report_grp.add_argument("--reportdir", action="store", metavar="path",
+                                default=os.path.join("test_reports"),
                                 help="Where to put our test reports")
 
         report_grp.add_argument("--noindex", action="store_true",
                                 help="Don't attempt to build an index.html for the reportdir")
-
-        argp.add_argument("--verbose", '-v', action="count",
-                          help="Print the output of the tests as they happen. Pass multiple times for more verbose output.")
 
         # Database config
         db_args = argp.add_argument_group(title="Database options")
@@ -177,7 +155,8 @@ To include the contents of a file as commandline arguments, prefix the filename 
                              help="Save the results of this testrun to the database")
 
         db_args.add_argument("--dbpath", action="store", metavar="file", default="",
-                             help="Path to the database (for SQLite) or configuration file (for Postgres).")
+                             help="Path to the database (for SQLite) or configuration file (for "
+                             "Postgres).")
 
         db_args.add_argument("--db_init", action="store_true",
                              help="Create the database and load schema")
@@ -185,51 +164,22 @@ To include the contents of a file as commandline arguments, prefix the filename 
         db_args.add_argument("--db_pg_schema", action="store", metavar="name", default="jscert",
                              help="Schema of Postgres database to use. (Defaults to 'jscert')")
 
-        # Condor infos
-        condor_args = argp.add_argument_group(title="Condor Options")
-        condor_args.add_argument("--condor", action="store_true",
-                                 help="Schedule these testcases on the Condor distributed computing cluster, requires Postgres database")
-
-        condor_args.add_argument("--condor_req", action="store", metavar="reqs", default="OpSysMajorVer > 12",
-                                 help="ClassAd describing minimum requirements for machines jobs are to run on, defaults to ICDoC minimum")
-
-        condor_args.add_argument("--batch_size", action="store", metavar="n", default=-1, type=int,
-                                 help="Number of testcases to run per Condor batch, if 0 run all tests in a single batch, otherwise run n tests per batch.")
-
-        condor_args.add_argument("--random_sched", action="store_true",
-                                 help="Use a random scheduler")
-
-        condor_args.add_argument(
-            "--condor_run", action="store_true", help=argparse.SUPPRESS)
-
-        condor_args.add_argument(
-            "--condor_help", action="store_true", help="Help on Condor setup")
-
         return argp
 
     def main(self):
+
+        # Parse arguments
         argp = self.build_arg_parser()
+        Condor.add_arg_group(argp)
         args = argp.parse_args()
 
+        # Configure logging
         log_level = logging.DEBUG if args.verbose > 1 else logging.WARNING
         logging.basicConfig(level=log_level)
 
-        if args.condor_help:
-            self.condor_help()
-            exit(0)
-
-        if args.condor:
-            self.condor_test_import()
-            if not args.db:
-                raise Exception(
-                    "A database is required to store condor results in")
-
+        # Configure dbmanager
         if args.db:
             if args.db == "sqlite":
-                if args.condor:
-                    raise Exception(
-                        "Only PostgresSQL may be used in a condor environment")
-
                 if not args.dbpath:
                     args.dbpath = os.path.join(
                         JSCERT_ROOT_DIR, "test_data", "test_results.db")

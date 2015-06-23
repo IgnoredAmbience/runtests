@@ -12,27 +12,11 @@ if sys.version_info < (3, 3):
 else:
     import subprocess
 
-from db import DBObject
-from interpreter import Interpreter
-from main import JSCERT_ROOT_DIR
-
-
-class Timer(object):
-    start_time = datetime.min
-    stop_time = datetime.min
-
-    def start_timer(self):
-        self.start_time = datetime.now()
-
-    def stop_timer(self):
-        self.stop_time = datetime.now()
-
-    def get_delta(self):
-        return self.stop_time - self.start_time
-
-    def get_duration(self):
-        return self.get_delta().total_seconds()
-
+from .db import DBObject
+from .interpreter import Interpreter
+from .main import JSCERT_ROOT_DIR
+from .resulthandler import TestResultHandler
+from .util import Timer
 
 class TestCase(Timer, DBObject):
 
@@ -167,80 +151,11 @@ class TestCase(Timer, DBObject):
         return self.get_relpath().startswith("tests/SpiderMonkey/")
 
 
-class Job(DBObject):
-
-    """Information about a particular test job"""
-    _table = "test_jobs"
-    title = ""
-    note = ""
-    impl_name = ""
-    impl_version = ""
-    repo_version = ""
-    create_time = None
-    user = ""
-    condor_cluster = 0
-    condor_scheduler = ""
-
-    interpreter = None
-
-    """
-    batch_size of 0 indicates a single batch containing all tests
-    n>0 produces batches of size n
-    """
-    batch_size = 0
-    batches = None
-
-    def __init__(self, title, note, interpreter, batch_size=0):
-        self.title = title
-        self.note = note
-        self.interpreter = interpreter
-        self.create_time = datetime.now()
-        self.impl_name = interpreter.get_name()
-        self.impl_version = interpreter.get_version()
-        self.set_repo_version()
-        self.user = pwd.getpwuid(os.geteuid()).pw_name
-        self.batch_size = batch_size
-        self.batches = []
-        self.new_batch()
-
-    def set_repo_version(self):
-        out = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=JSCERT_ROOT_DIR)
-        self.repo_version = out.strip()
-
-    def new_batch(self):
-        self.batches.append(TestBatch(self))
-
-    def get_batches(self):
-        return self.batches
-
-    def get_batch_count(self):
-        return len(self.batches)
-
-    def add_testcase(self, testcase):
-        if self.batch_size and len(self.batches[-1]) >= self.batch_size:
-            self.new_batch()
-        self.batches[-1].add_testcase(testcase)
-
-    def add_testcases(self, testcases):
-        for testcase in testcases:
-            self.add_testcase(testcase)
-
-    def _db_dict(self):
-        return {"title": self.title,
-                "note": self.note,
-                "impl_name": self.impl_name,
-                "impl_version": self.impl_version,
-                "create_time": self.create_time,
-                "repo_version": self.repo_version,
-                "username": self.user,
-                "condor_cluster": self.condor_cluster,
-                "condor_scheduler": self.condor_scheduler}
-
 
 class TestBatch(Timer, DBObject):
 
-    """Information about a particular test batch"""
+    """Information about a collection of TestCases to be run on a machine together"""
+
     _table = "test_batches"
     job = None
 
@@ -334,3 +249,139 @@ class TestBatch(Timer, DBObject):
         if self.job != None:
             d['job_id'] = self.job._dbid
         return d
+
+class Job(DBObject):
+
+    """Information about a particular test job, a collection of TestBatches"""
+
+    _table = "test_jobs"
+    title = ""
+    note = ""
+    impl_name = ""
+    impl_version = ""
+    repo_version = ""
+    create_time = None
+    user = ""
+    condor_cluster = 0
+    condor_scheduler = ""
+
+    interpreter = None
+
+    """
+    batch_size of 0 indicates a single batch containing all tests
+    n>0 produces batches of size n
+    """
+    batch_size = 0
+    batches = None
+
+    def __init__(self, title, note, interpreter, batch_size=0):
+        self.title = title
+        self.note = note
+        self.interpreter = interpreter
+        self.create_time = datetime.now()
+        self.impl_name = interpreter.get_name()
+        self.impl_version = interpreter.get_version()
+        self.set_repo_version()
+        self.user = pwd.getpwuid(os.geteuid()).pw_name
+        self.batch_size = batch_size
+        self.batches = []
+        self.new_batch()
+
+    def set_repo_version(self):
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=JSCERT_ROOT_DIR)
+        self.repo_version = out.strip()
+
+    def new_batch(self):
+        self.batches.append(TestBatch(self))
+
+    def add_testcase(self, testcase):
+        if self.batch_size and len(self.batches[-1]) >= self.batch_size:
+            self.new_batch()
+        self.batches[-1].add_testcase(testcase)
+
+    def add_testcases(self, testcases):
+        for testcase in testcases:
+            self.add_testcase(testcase)
+
+    def _db_dict(self):
+        return {"title": self.title,
+                "note": self.note,
+                "impl_name": self.impl_name,
+                "impl_version": self.impl_version,
+                "create_time": self.create_time,
+                "repo_version": self.repo_version,
+                "username": self.user,
+                "condor_cluster": self.condor_cluster,
+                "condor_scheduler": self.condor_scheduler}
+
+class Executor(object):
+    """Base class for different test execution strategies, for example:
+    sequential, multi-threaded, distributed with Condor"""
+
+    stopping = False
+    test_result_handlers = None
+
+    def __init__(self):
+        self.handlers = []
+
+    def add_handler(self, handler):
+        if not isinstance(handler, TestResultHandler):
+            raise TypeError("%s is not a TestResultHandler" % (handler,))
+        self.test_result_handlers.append(handler)
+
+    def run_job(self, job):
+        """Override this method to implement a custom test batch dispatch"""
+
+        for handler in self.handlers:
+            handler.start_job(job)
+
+        job.start_timer()
+        for batch in job.batches:
+            self.run_batch(batch)
+        job.stop_timer()
+
+        for handler in self.handlers:
+            handler.finish_job(job)
+
+    def run_batch(self, batch):
+        batch.set_machine_details()
+
+        for handler in self.handlers:
+            handler.start_batch(batch)
+
+        batch.start_timer()
+
+        # Now let's get down to the business of running the tests
+        while batch.has_testcase():
+            testcase = batch.get_testcase()
+            for handler in self.handlers:
+                handler.start_test(testcase)
+
+            # FIXME: Too much indirection
+            batch.job.interpreter.run_test(testcase)
+
+            # FIXME: move this closer to run_test? Or testcase?
+            batch.test_finished(testcase)
+
+            # Inform handlers of a test result
+            # We share the same TestResult among handlers
+            for handler in self.handlers:
+                handler.finish_test(testcase)
+
+        batch.stop_timer()
+
+        # Tell handlers that we're done
+        for handler in self.handlers:
+            handler.finish_batch(batch)
+
+    def stop(self):
+        if self.stopping:
+            return
+
+        self.stopping = True
+
+        # TODO: Stop stuff
+
+        for handler in self.handlers:
+            handler.interrupt_handler()

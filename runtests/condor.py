@@ -1,21 +1,21 @@
+"""Condor scheduler support for test running"""
 from __future__ import print_function
+import argparse
 import logging
 import os
 import random
-import sys
+
+from .core import Executor
 
 try:
     import classad
     import htcondor
-except ImportError as e:
+except ImportError as ex:
     classad = htcondor = None
-    condor_import_error = e
+    CONDOR_IMPORT_ERROR = ex
 
-
-class Condor(object):
-
-    def condor_help(self):
-        help_msg = """
+def condor_help():
+    help_msg = """
 Condor Help
 
 This script is able to submit test run jobs to Condor, results may only be
@@ -60,16 +60,18 @@ Presently, the only way to interrogate the results is to perform SQL queries by
 hand. The analysis scripts haven't yet been updated to support the new database
 schema.
 """
-        print(help_msg)
-        print("Testing Condor Python bindings: ")
-        self.condor_test_import()
-        print("OK!")
+    print(help_msg)
+    print("Testing Condor Python bindings: ")
+    condor_test_import()
+    print("OK!")
 
-    def condor_test_import(self):
-        if not (classad or htcondor):
-            logging.error("Could not load modules required for Condor submit support (see --condor_help): %s",
-                          condor_import_error)
-            exit(1)
+def condor_test_import():
+    if not (classad or htcondor):
+        logging.error("Could not load modules required for Condor submit "
+                      "support (see --condor_help): %s", CONDOR_IMPORT_ERROR)
+        exit(1)
+
+class Condor(Executor):
 
     def condor_submit(self, job, machine_reqs, initial_args, random_sched, verbose=False):
         batches = job.get_batches()
@@ -160,8 +162,8 @@ schema.
         try:
             job.condor_scheduler = machine
         except RuntimeError as e:
-            logging.error(
-                "The Condor scheduler appears to have failed. You should probably run condor_restart.")
+            logging.error("The Condor scheduler appears to have failed. "
+                          "You should probably run condor_restart.")
             raise e
         job.condor_cluster = cluster_id
 
@@ -179,3 +181,40 @@ schema.
             tc._dbid = tc_id
 
         return batch
+
+    @staticmethod
+    def add_arg_group(argp):
+        condor_args = argp.add_argument_group(title="Condor Options")
+        condor_args.add_argument("--condor", action="store_true",
+                                 help="Schedule these testcases on the Condor distributed computing"
+                                 "cluster, requires Postgres database")
+
+        condor_args.add_argument("--condor_req", action="store", metavar="reqs",
+                                 default="OpSysMajorVer > 12",
+                                 help="ClassAd describing minimum requirements for machines jobs"
+                                 "are to run on, defaults to ICDoC minimum")
+
+        condor_args.add_argument("--random_sched", action="store_true",
+                                 help="Use a random scheduler")
+
+        condor_args.add_argument("--condor_run", action="store_true", help=argparse.SUPPRESS)
+
+        condor_args.add_argument("--condor_help", action="store_true", help="Help on Condor setup")
+
+    @staticmethod
+    def from_args(args):
+        if args.condor_help:
+            self.condor_help()
+            exit(0)
+
+        if args.condor:
+            self.condor_test_import()
+            if not args.db:
+                raise Exception(
+                    "A database is required to store condor results in")
+
+                if db manager is sqlite:
+                    raise Exception(
+                        "Only PostgresSQL may be used in a condor environment")
+        pass
+
