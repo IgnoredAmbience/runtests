@@ -201,6 +201,10 @@ class Condor(Executor):
 
         condor_args.add_argument("--condor_help", action="store_true", help="Help on Condor setup")
 
+        condor_args.add_argument("--batch_size", action="store", metavar="n", default=4, type=int,
+                                 help="Number of testcases to run per batch")
+
+
     @staticmethod
     def from_args(args):
         if args.condor_help:
@@ -213,7 +217,7 @@ class Condor(Executor):
                 raise Exception(
                     "A database is required to store condor results in")
 
-                if db manager is sqlite:
+                if db_manager == sqlite:
                     raise Exception(
                         "Only PostgresSQL may be used in a condor environment")
         pass

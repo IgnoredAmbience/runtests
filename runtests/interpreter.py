@@ -10,10 +10,10 @@ if sys.version_info < (3, 3):
 else:
     import subprocess
 
-from main import JSCERT_ROOT_DIR
+from .main import JSCERT_ROOT_DIR
+from .util import SubclassSelector
 
-
-class Interpreter(object):
+class Interpreter(SubclassSelector):
 
     """Base class for Interpreter calling methods"""
     pass_code = 0
@@ -30,22 +30,6 @@ class Interpreter(object):
     FAIL = 1
     ABORT = 2
     TIMEOUT = 3
-
-    @classmethod
-    def Construct(cls, name, *args):
-        # pylint: disable=no-member
-        for subcls in Interpreter.__subclasses__():
-            if name.lower() == subcls.__name__.lower():
-                return subcls(*args)
-        return cls(*args)
-
-    @classmethod
-    def Types(cls):
-        # pylint: disable=no-member
-        interps = map(
-            lambda c: c.__name__.lower(), Interpreter.__subclasses__())
-        interps.append("generic")
-        return interps
 
     def __init__(self):
         if self.trashesinput:

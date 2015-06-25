@@ -16,7 +16,7 @@ from .db import DBObject
 from .interpreter import Interpreter
 from .main import JSCERT_ROOT_DIR
 from .resulthandler import TestResultHandler
-from .util import Timer
+from .util import Timer, SubclassSelector
 
 class TestCase(Timer, DBObject):
 
@@ -271,10 +271,10 @@ class Job(DBObject):
     batch_size of 0 indicates a single batch containing all tests
     n>0 produces batches of size n
     """
-    batch_size = 0
+    _batch_size = 0
     batches = None
 
-    def __init__(self, title, note, interpreter, batch_size=0):
+    def __init__(self, title, note, interpreter, batch_size=None):
         self.title = title
         self.note = note
         self.interpreter = interpreter
@@ -283,7 +283,10 @@ class Job(DBObject):
         self.impl_version = interpreter.get_version()
         self.set_repo_version()
         self.user = pwd.getpwuid(os.geteuid()).pw_name
-        self.batch_size = batch_size
+
+        self._batch_size = batch_size
+
+        # Lazily construct batches as required
         self.batches = []
         self.new_batch()
 
@@ -296,7 +299,7 @@ class Job(DBObject):
         self.batches.append(TestBatch(self))
 
     def add_testcase(self, testcase):
-        if self.batch_size and len(self.batches[-1]) >= self.batch_size:
+        if self._batch_size and len(self.batches[-1]) >= self._batch_size:
             self.new_batch()
         self.batches[-1].add_testcase(testcase)
 
@@ -315,7 +318,7 @@ class Job(DBObject):
                 "condor_cluster": self.condor_cluster,
                 "condor_scheduler": self.condor_scheduler}
 
-class Executor(object):
+class Executor(SubclassSelector):
     """Base class for different test execution strategies, for example:
     sequential, multi-threaded, distributed with Condor"""
 
@@ -385,3 +388,7 @@ class Executor(object):
 
         for handler in self.handlers:
             handler.interrupt_handler()
+
+    @staticmethod
+    def add_arg_group(argp):
+        pass

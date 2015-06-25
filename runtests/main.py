@@ -96,14 +96,8 @@ To include the contents of a file as commandline arguments, prefix the filename 
                           help="Print the output of the tests as they happen. Pass multiple times "
                           "for more verbose output.")
 
-        # Test batching
-        batching = argp.add_mutually_exclusive_group()
-        batching.add_argument("--batch_size", action="store", metavar="n", default=0, type=int,
-                              help="Number of testcases to run per batch")
-
-        batching.add_argument("--batch_count", action="store", metavar="n", default=0, type=int,
-                              help="Number of batches of testcases to run, tests will be "
-                              "distributed evenly across all batches")
+        argp.add_argument('--executor', '-x', action='store', choices=Executor.TypesStr(),
+                          default='generic', help='Execution strategy to use')
 
         # Test Job information
         jobinfo = argp.add_argument_group(title="Test job metadata")
@@ -114,7 +108,7 @@ To include the contents of a file as commandline arguments, prefix the filename 
                              help="Optional explanatory note to be added to the test report.")
 
         interp_grp = argp.add_argument_group(title="Interpreter options")
-        interp_grp.add_argument("--interp", action="store", choices=Interpreter.Types(),
+        interp_grp.add_argument("--interp", action="store", choices=Interpreter.TypesStr(),
                                 default="jsref", help="Interpreter type (default: jsref)")
 
         interp_grp.add_argument("--interp_path", action="store", metavar="path", default="",
@@ -170,7 +164,8 @@ To include the contents of a file as commandline arguments, prefix the filename 
 
         # Parse arguments
         argp = self.build_arg_parser()
-        Condor.add_arg_group(argp)
+        for executor in Executor.Types():
+            executor.add_arg_group(argp)
         args = argp.parse_args()
 
         # Configure logging
@@ -219,6 +214,8 @@ To include the contents of a file as commandline arguments, prefix the filename 
         # Generate testcases
         testcases = self.get_testcases_from_paths(
             args.filenames, exclude=args.exclude)
+
+        # FIXME: Move to ORM layer
         if dbmanager and not args.condor_run:
             print("Preloading test-cases into database...")
             dbmanager.connect()
@@ -228,14 +225,6 @@ To include the contents of a file as commandline arguments, prefix the filename 
         print("Building job...")
         # Build job
         job = Job(args.title, args.note, interpreter)
-
-        if args.batch_size < 0:
-            if args.condor:
-                job.batch_size = 1
-            else:
-                job.batch_size = 0
-        else:
-            job.batch_size = args.batch_size
 
         job.add_testcases(testcases)
         print("Done! %s test batches created." % job.get_batch_count())
