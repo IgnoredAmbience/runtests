@@ -11,9 +11,10 @@ else:
     import subprocess
 
 from .main import JSCERT_ROOT_DIR
-from .util import SubclassSelector
+from .util import SubclassSelectorMixin
 
-class Interpreter(SubclassSelector):
+
+class Interpreter(SubclassSelectorMixin):
 
     """Base class for Interpreter calling methods"""
     pass_code = 0

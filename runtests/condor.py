@@ -14,6 +14,7 @@ except ImportError as ex:
     classad = htcondor = None
     CONDOR_IMPORT_ERROR = ex
 
+
 def condor_help():
     help_msg = """
 Condor Help
@@ -65,22 +66,37 @@ schema.
     condor_test_import()
     print("OK!")
 
+
 def condor_test_import():
     if not (classad or htcondor):
         logging.error("Could not load modules required for Condor submit "
                       "support (see --condor_help): %s", CONDOR_IMPORT_ERROR)
         exit(1)
 
+
 class Condor(Executor):
 
-    def condor_submit(self, job, machine_reqs, initial_args, random_sched, verbose=False):
+    def run_job(self, job):
+        # Submit job to Condor?
+        print("Submitting to Condor Scheduler")
+        n = self.condor_submit(
+            job, args.condor_req, args, args.random_sched, args.verbose)
+        print("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
+              (n, job.condor_cluster, job.condor_scheduler, job._dbid))
+        dbmanager.update_object(job)
+        dbmanager.disconnect()
+        exit(0)
+
+    def condor_submit(self, job, machine_reqs, initial_args, random_sched,
+                      verbose=False):
         batches = job.get_batches()
         n = len(batches)
 
         batch_ids = map(lambda b: b._dbid, batches)
         batch_tcs = map(lambda b: b.get_testcases(), batches)
         tc_paths = map(
-            lambda tcs: " ".join(map(lambda t: t.get_relpath(), tcs)), batch_tcs)
+            lambda tcs: " ".join(map(lambda t: t.get_relpath(), tcs)),
+            batch_tcs)
         tc_ids = map(
             lambda tcs: ",".join(map(lambda t: str(t._dbid), tcs)), batch_tcs)
 
@@ -126,8 +142,18 @@ class Condor(Executor):
                 job._dbid]
 
         # Build argument string
-        args_to_copy = ["db", "dbpath", "db_pg_schema", "interp", "interp_path",
-                        "interp_version", "no_parasite", "debug", "verbose", "timeout", "parser"]
+        args_to_copy = [
+            "db",
+            "dbpath",
+            "db_pg_schema",
+            "interp",
+            "interp_path",
+            "interp_version",
+            "no_parasite",
+            "debug",
+            "verbose",
+            "timeout",
+            "parser"]
 
         arguments = ["--condor_run"]
         initial_args = vars(initial_args)
@@ -185,25 +211,26 @@ class Condor(Executor):
     @staticmethod
     def add_arg_group(argp):
         condor_args = argp.add_argument_group(title="Condor Options")
-        condor_args.add_argument("--condor", action="store_true",
-                                 help="Schedule these testcases on the Condor distributed computing"
-                                 "cluster, requires Postgres database")
 
-        condor_args.add_argument("--condor_req", action="store", metavar="reqs",
-                                 default="OpSysMajorVer > 12",
-                                 help="ClassAd describing minimum requirements for machines jobs"
-                                 "are to run on, defaults to ICDoC minimum")
+        condor_args.add_argument(
+            "--condor", action="store_true",
+            help="Schedule these testcases on the Condor distributed computing "
+            "cluster, requires Postgres database")
+
+        condor_args.add_argument(
+            "--condor_req", action="store", metavar="reqs",
+            default="OpSysMajorVer > 12",
+            help="ClassAd describing minimum requirements for machines jobs "
+            "are to run on, defaults to ICDoC minimum")
 
         condor_args.add_argument("--random_sched", action="store_true",
                                  help="Use a random scheduler")
 
-        condor_args.add_argument("--condor_run", action="store_true", help=argparse.SUPPRESS)
+        condor_args.add_argument(
+            "--condor_run", action="store_true", help=argparse.SUPPRESS)
 
-        condor_args.add_argument("--condor_help", action="store_true", help="Help on Condor setup")
-
-        condor_args.add_argument("--batch_size", action="store", metavar="n", default=4, type=int,
-                                 help="Number of testcases to run per batch")
-
+        condor_args.add_argument(
+            "--condor_help", action="store_true", help="Help on Condor setup")
 
     @staticmethod
     def from_args(args):
@@ -221,4 +248,3 @@ class Condor(Executor):
                     raise Exception(
                         "Only PostgresSQL may be used in a condor environment")
         pass
-

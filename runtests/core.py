@@ -16,13 +16,15 @@ from .db import DBObject
 from .interpreter import Interpreter
 from .main import JSCERT_ROOT_DIR
 from .resulthandler import TestResultHandler
-from .util import Timer, SubclassSelector
+from .util import Timer, SubclassSelectorMixin
+
 
 class TestCase(Timer, DBObject):
 
     """
     A test case knows what file it came from, whether it has been run and if so,
-    whether it passed, failed or aborted, and what output it generated along the way.
+    whether it passed, failed or aborted, and what output it generated along the
+    way.
     """
     _table = "test_runs"
     batch = None
@@ -51,7 +53,7 @@ class TestCase(Timer, DBObject):
             self.fetch_file_info()
 
     def fetch_file_info(self):
-        if self.includes == None:
+        if self.includes is None:
             with open(self.get_realpath()) as f:
                 # If this was a sputnik test, it may have expected to fail.
                 # If so, we will need to invert the return value later on.
@@ -104,7 +106,7 @@ class TestCase(Timer, DBObject):
         return self.result == self.TIMEOUT
 
     def get_relpath(self):
-        """Returns path of test relative to JSCert project repo root directory"""
+        """Return path of test relative to JSCert project repo root directory"""
         return self.filename
 
     def get_realpath(self):
@@ -151,11 +153,9 @@ class TestCase(Timer, DBObject):
         return self.get_relpath().startswith("tests/SpiderMonkey/")
 
 
-
 class TestBatch(Timer, DBObject):
 
-    """Information about a collection of TestCases to be run on a machine together"""
-
+    """Information about a collection of TestCases to be run on a machine"""
     _table = "test_batches"
     job = None
 
@@ -246,9 +246,10 @@ class TestBatch(Timer, DBObject):
              "start_time": self.start_time,
              "end_time": self.stop_time,
              "condor_proc": self.condor_proc}
-        if self.job != None:
+        if self.job is not None:
             d['job_id'] = self.job._dbid
         return d
+
 
 class Job(DBObject):
 
@@ -318,9 +319,13 @@ class Job(DBObject):
                 "condor_cluster": self.condor_cluster,
                 "condor_scheduler": self.condor_scheduler}
 
-class Executor(SubclassSelector):
+
+class Executor(SubclassSelectorMixin):
+
     """Base class for different test execution strategies, for example:
     sequential, multi-threaded, distributed with Condor"""
+
+    __generic_name__ = 'sequential'
 
     stopping = False
     test_result_handlers = None

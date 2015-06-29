@@ -1,5 +1,6 @@
 from datetime import datetime
 
+
 class Timer(object):
     start_time = datetime.min
     stop_time = datetime.min
@@ -16,19 +17,33 @@ class Timer(object):
     def get_duration(self):
         return self.get_delta().total_seconds()
 
-class SubclassSelector(object):
-    """Mixin to assist selecting and constructing a subclass from command line arguments"""
+
+class SubclassSelectorMixin(object):
+
+    """Mixin to assist selecting and constructing a subclass from command line
+    arguments"""
+
+    __generic_name__ = 'generic'
+
+    def __init__(self, **nargs):
+        raise NotImplemented
+
     @classmethod
-    def Construct(cls, name, *args):
+    def Construct(cls, name, args):
+        """Construct the appropriate subclass instance of name, using the
+        an arguments object"""
         # pylint: disable=no-member
         name = name.lower()
-        if name == "generic":
-            return cls(*args)
+
+        if cls.__generic_name__ and name == cls.__generic_name__:
+            return cls(**vars(args))
+
         for subcls in cls.__subclasses__():
             if name == subcls.__name__.lower():
-                return subcls(*args)
+                return subcls(**vars(args))
+
         raise ValueError("Failure constructing %s: subclass %s is not known." %
-                  (cls.__name__, name))
+                         (cls.__name__, name))
 
     @classmethod
     def Types(cls):
@@ -38,6 +53,6 @@ class SubclassSelector(object):
     @classmethod
     def TypesStr(cls):
         # pylint: disable=no-member
-        interps = ['generic'] + [c.__name__.lower() for c in cls.__subclasses__()]
+        interps = [cls.__generic_name__] + \
+            [c.__name__.lower() for c in cls.__subclasses__()]
         return interps
-
