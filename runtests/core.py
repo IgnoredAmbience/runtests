@@ -16,7 +16,7 @@ from .db import DBObject
 from .interpreter import Interpreter
 from .main import JSCERT_ROOT_DIR
 from .resulthandler import TestResultHandler
-from .util import Timer, SubclassSelectorMixin
+from .util import Timer
 
 
 class TestCase(Timer, DBObject):
@@ -318,82 +318,3 @@ class Job(DBObject):
                 "username": self.user,
                 "condor_cluster": self.condor_cluster,
                 "condor_scheduler": self.condor_scheduler}
-
-
-class Executor(SubclassSelectorMixin):
-
-    """Base class for different test execution strategies, for example:
-    sequential, multi-threaded, distributed with Condor"""
-
-    __generic_name__ = 'sequential'
-
-    stopping = False
-    test_result_handlers = None
-
-    def __init__(self):
-        self.handlers = []
-
-    def add_handler(self, handler):
-        if not isinstance(handler, TestResultHandler):
-            raise TypeError("%s is not a TestResultHandler" % (handler,))
-        self.test_result_handlers.append(handler)
-
-    def run_job(self, job):
-        """Override this method to implement a custom test batch dispatch"""
-
-        for handler in self.handlers:
-            handler.start_job(job)
-
-        job.start_timer()
-        for batch in job.batches:
-            self.run_batch(batch)
-        job.stop_timer()
-
-        for handler in self.handlers:
-            handler.finish_job(job)
-
-    def run_batch(self, batch):
-        batch.set_machine_details()
-
-        for handler in self.handlers:
-            handler.start_batch(batch)
-
-        batch.start_timer()
-
-        # Now let's get down to the business of running the tests
-        while batch.has_testcase():
-            testcase = batch.get_testcase()
-            for handler in self.handlers:
-                handler.start_test(testcase)
-
-            # FIXME: Too much indirection
-            batch.job.interpreter.run_test(testcase)
-
-            # FIXME: move this closer to run_test? Or testcase?
-            batch.test_finished(testcase)
-
-            # Inform handlers of a test result
-            # We share the same TestResult among handlers
-            for handler in self.handlers:
-                handler.finish_test(testcase)
-
-        batch.stop_timer()
-
-        # Tell handlers that we're done
-        for handler in self.handlers:
-            handler.finish_batch(batch)
-
-    def stop(self):
-        if self.stopping:
-            return
-
-        self.stopping = True
-
-        # TODO: Stop stuff
-
-        for handler in self.handlers:
-            handler.interrupt_handler()
-
-    @staticmethod
-    def add_arg_group(argp):
-        pass
