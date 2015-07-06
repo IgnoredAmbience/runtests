@@ -23,7 +23,8 @@ class SubclassSelectorMixin(object):
     """Mixin to assist selecting and constructing a subclass from command line
     arguments"""
 
-    __generic_name__ = 'generic'
+    """If set, will offer the root cls for construction"""
+    __generic_name__ = None
 
     def __init__(self, **nargs):
         raise NotImplemented
@@ -48,11 +49,11 @@ class SubclassSelectorMixin(object):
     @classmethod
     def Types(cls):
         # pylint: disable=no-member
-        return [cls] + cls.__subclasses__()
+        types = [cls] if cls.__generic_name__ else []
+        return types + cls.__subclasses__()
 
     @classmethod
     def TypesStr(cls):
         # pylint: disable=no-member
-        interps = [cls.__generic_name__] + \
-            [c.__name__.lower() for c in cls.__subclasses__()]
-        return interps
+        types = [cls.__generic_name__] if cls.__generic_name__ else []
+        return types + [c.__name__.lower() for c in cls.__subclasses__()]

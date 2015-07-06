@@ -18,6 +18,8 @@ class Executor(SubclassSelectorMixin):
         self.batch_size = batch_size
 
     def add_handler(self, handler):
+        if not handler:
+            return
         if not isinstance(handler, TestResultHandler):
             raise TypeError("%s is not a TestResultHandler" % (handler,))
         self.handlers.append(handler)
@@ -91,7 +93,7 @@ class Executor(SubclassSelectorMixin):
 
     @staticmethod
     def add_arg_group(argp):
-        """Called to add arguments to the CLI, subclasses MUST override this"""
+        """Called to add arguments to the CLI, subclasses should override this"""
         pass
 
 
@@ -107,6 +109,3 @@ class Sequential(Executor):
     def run_batch(self, batch):
         return self._run_batch(batch)
 
-    @staticmethod
-    def add_arg_group(argp):
-        pass

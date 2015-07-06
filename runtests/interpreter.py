@@ -17,11 +17,13 @@ from .util import SubclassSelectorMixin
 class Interpreter(SubclassSelectorMixin):
 
     """Base class for Interpreter calling methods"""
+
+    __generic_name__ = 'generic'
+
     pass_code = 0
     fail_code = 1
     path = ""
     version = "Version unknown"
-    arg_name = "generic"
     timeout = None
 
     trashesinput = False
@@ -132,7 +134,6 @@ class Interpreter(SubclassSelectorMixin):
 
 class Spidermonkey(Interpreter):
     fail_code = 3
-    arg_name = "spidermonkey"
 
     def get_name(self):
         return "SpiderMonkey"
@@ -140,7 +141,6 @@ class Spidermonkey(Interpreter):
 
 class NodeJS(Interpreter):
     path = "/usr/bin/nodejs"
-    arg_name = "node"
 
     def get_name(self):
         return "node.js"
@@ -148,7 +148,6 @@ class NodeJS(Interpreter):
 
 class LambdaS5(Interpreter):
     current_dir = ""
-    arg_name = "lambdas5"
 
     def get_name(self):
         return "LambdaS5"
@@ -169,7 +168,6 @@ class JSRef(Interpreter):
     interp_dir = os.path.join(JSCERT_ROOT_DIR, "interp")
     path = os.path.join(interp_dir, "run_js")
     parser_path = os.path.join(interp_dir, "parser", "lib", "js_parser.jar")
-    arg_name = "jsref"
     no_parasite = False
     jsonparser = False
     trashesinput = True

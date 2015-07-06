@@ -127,6 +127,15 @@ class DBManager(TestResultHandler):
         dicts = map(lambda o: o.db_dict(), objs)
         self.update_many(table, dicts)
 
+    def load_batch_tests(self, job_id, batch_idx):
+        sql = """SELECT test_id FROM test_runs WHERE batch_id = (
+                   SELECT id FROM test_batches WHERE job_id = %s
+                   ORDER BY id LIMIT 1 OFFSET %s
+                 )"""
+        self.cur.execute(sql, (job_id, batch_idx))
+        results = (res[0] for res in self.cur.fetch_all())
+        return results
+
     def import_schema(self):
         with open(DB_SCHEMA_LOCATION, 'r') as f:
             sql = f.read()
@@ -142,6 +151,39 @@ class DBManager(TestResultHandler):
 
     def subst_pattern(self, field):
         raise NotImplementedError
+
+    @staticmethod
+    def from_args(args):
+        dbmanager = None
+        if args.db:
+            if args.db == "sqlite":
+                if not args.dbpath:
+                    args.dbpath = os.path.join(
+                        JSCERT_ROOT_DIR, "test_data", "test_results.db")
+
+                dbmanager = SQLiteDBManager(args.dbpath, args.db_init)
+
+            elif args.db == "postgres":
+                if not args.dbpath:
+                    args.dbpath = os.path.join(JSCERT_ROOT_DIR, ".pgconfig")
+                try:
+                    with open(args.dbpath, "r") as f:
+                        dbmanager = PostgresDBManager(
+                            f.readline(), args.db_pg_schema)
+                except IOError as e:
+                    raise Exception(
+                        "Could not open postgres configuration: %s" % e)
+
+            if args.db_init:
+                dbmanager.connect()
+                dbmanager.import_schema()
+                print("Database created successfully")
+                exit(0)
+
+            if args.executor is 'condor':
+                dbmanager.wait_for_batch = True
+
+        return dbmanager
 
 
 class SQLiteDBManager(DBManager):

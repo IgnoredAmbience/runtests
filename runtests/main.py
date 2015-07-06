@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-A not-so-mini test harness. Runs all the files you specify through an interpreter
-you specify, and collates the exit codes for you. Call with the -h switch to
-find out about options.
+A not-so-mini test harness. Runs all the files you specify through an
+interpreter you specify, and collates the exit codes for you. Call with the -h
+switch to find out about options.
 """
 from __future__ import print_function
 import argparse
@@ -14,11 +14,11 @@ from functools import reduce
 JSCERT_ROOT_DIR = os.path.realpath(
     os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from .condor import *
-from .core import *
-from .db import *
-from .interpreter import *
-from .resulthandler import *
+from .core import Job, TestCase
+from .db import DBManager
+from .executor import Executor
+from .interpreter import Interpreter
+from .resulthandler import CLIResultPrinter, WebResultPrinter
 
 
 class Runtests(object):
@@ -41,18 +41,21 @@ class Runtests(object):
 
         if os.path.isdir(path):
             return self.get_testcases_from_dir(path, testcases, exclude)
-        elif not path in exclude:
+        elif path not in exclude:
             testcases.append(TestCase(path))
 
         return testcases
 
     def get_testcases_from_dir(self, dirname, testcases=[], exclude=[]):
-        """Recusively walk the given directory looking for .js files, does not traverse symbolic links"""
+        """ Recusively walk the given directory looking for .js files, does not
+            traverse symbolic links"""
         dirname = os.path.realpath(dirname)
         for r, d, f in os.walk(dirname):
             for filename in f:
                 filename = os.path.join(r, filename)
-                if os.path.isfile(filename) and filename.endswith(".js") and not filename in exclude:
+                if (os.path.isfile(filename)
+                        and filename.endswith(".js")
+                        and filename not in exclude):
                     testcases.append(TestCase(filename))
         return testcases
 
@@ -91,6 +94,10 @@ filename using the @ character.
             "provided, .js files will be searched for recursively.")
 
         argp.add_argument(
+            "--batch", metavar="job_id,batch_idx", action="store", type=str,
+            help="Execute tests predefined by the given job id and batch index")
+
+        argp.add_argument(
             "--timeout", action="store", metavar="timeout",
             type=int, default=None,
             help="Timeout in seconds for each testcase, defaults to None.")
@@ -110,11 +117,10 @@ filename using the @ character.
             choices=Executor.TypesStr(), default='sequential',
             help='Execution strategy to use (default: sequential)')
 
-        condor_args.add_argument(
+        argp.add_argument(
             "--batch_size", action="store", metavar="n", default=0, type=int,
             help="Number of testcases to run per batch (default value varies"
             " depending on the executor used)")
-
 
         # Test Job information
         jobinfo = argp.add_argument_group(title="Test job metadata")
@@ -208,13 +214,21 @@ filename using the @ character.
 
         self.executor = executor = Executor.Construct(args.executor, args)
 
+        dbmanager = DBManager.from_args(args)
+
+        results = dbmanager.load_batch_tests(166, 0)
+        print(results)
+        exit(0)
+
+        executor.add_handler(dbmanager)
+
         # Output handlers
         cli = CLIResultPrinter(args.verbose)
         executor.add_handler(cli)
 
         if args.webreport:
-            webreport_handler =
-                WebResultPrinter(args.templatedir, args.reportdir, args.noindex)
+            webreport_handler = WebResultPrinter(
+                args.templatedir, args.reportdir, args.noindex)
             executor.add_handler(webreport_handler)
 
         # Interpreter
@@ -230,12 +244,24 @@ filename using the @ character.
 
         # Generate testcases
         logging.info("Finding test cases to run")
-        testcases = self.get_testcases_from_paths(
-            args.filenames, exclude=args.exclude)
+        if dbmanager and args.batch:
+            job_id, _, batch_id = args.batch.partition(',')
+            job_id = int(job_id)
+            batch_id = int(batch_id)
+
+        else:
+            testcases = self.get_testcases_from_paths(
+                args.filenames, exclude=args.exclude)
+
+            if dbmanager:
+                print("Preloading test-cases into database...")
+                dbmanager.connect()
+                dbmanager.insert_testcases(testcases)  # auto-commits
+                print("Done!")
 
         job.add_testcases(testcases)
         logging.info("%s tests found, split into %s test batches.",
-                     len(testcases), len(job.batches))
+                    len(testcases), len(job.batches))
 
         executor.run_job(job)
 
