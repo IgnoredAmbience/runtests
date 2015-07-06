@@ -94,7 +94,8 @@ filename using the @ character.
             "provided, .js files will be searched for recursively.")
 
         argp.add_argument(
-            "--batch", metavar="job_id,batch_idx", action="store", type=str,
+            "--batch", metavar="job_id,batch_idx",
+            action="store", default="", type=str,
             help="Execute tests predefined by the given job id and batch index")
 
         argp.add_argument(
@@ -216,10 +217,6 @@ filename using the @ character.
 
         dbmanager = DBManager.from_args(args)
 
-        results = dbmanager.load_batch_tests(166, 0)
-        print(results)
-        exit(0)
-
         executor.add_handler(dbmanager)
 
         # Output handlers
@@ -245,10 +242,9 @@ filename using the @ character.
         # Generate testcases
         logging.info("Finding test cases to run")
         if dbmanager and args.batch:
-            job_id, _, batch_id = args.batch.partition(',')
-            job_id = int(job_id)
-            batch_id = int(batch_id)
-
+            job_id, _, batch_idx = args.batch.partition(',')
+            paths = dbmanager.load_batch_tests(int(job_id), int(batch_idx))
+            testcases = self.get_testcases_from_paths(paths)
         else:
             testcases = self.get_testcases_from_paths(
                 args.filenames, exclude=args.exclude)

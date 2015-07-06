@@ -133,7 +133,7 @@ class DBManager(TestResultHandler):
                    ORDER BY id LIMIT 1 OFFSET %s
                  )"""
         self.cur.execute(sql, (job_id, batch_idx))
-        results = (res[0] for res in self.cur.fetch_all())
+        results = [res[0] for res in self.cur.fetchall()]
         return results
 
     def import_schema(self):
@@ -182,6 +182,7 @@ class DBManager(TestResultHandler):
 
             if args.executor is 'condor':
                 dbmanager.wait_for_batch = True
+            dbmanager.connect()
 
         return dbmanager
 
