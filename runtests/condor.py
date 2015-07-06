@@ -101,8 +101,8 @@ class Condor(Executor):
             "timeout",
         ]
 
+        arguments = []
         for (arg, val) in self.other_args.iteritems():
-            arguments = []
             if val and arg in args_to_copy:
                 arguments.append("--%s" % arg)
                 if not isinstance(val, bool):
