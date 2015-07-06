@@ -133,10 +133,9 @@ class DBManager(TestResultHandler):
         self.cur.execute(batch_id_sql, (job_id, batch_idx))
         (batch_id,) = self.cur.fetchone()
 
-        tests_sql = "SELECT test_id FROM test_runs WHERE batch_id = %s"
+        tests_sql = "SELECT id, test_id FROM test_runs WHERE batch_id = %s"
         self.cur.execute(tests_sql, (batch_id,))
-        tests = [res[0] for res in self.cur.fetchall()]
-        return (batch_id, tests)
+        return (batch_id, self.cur.fetchall())
 
     def import_schema(self):
         with open(DB_SCHEMA_LOCATION, 'r') as f:

@@ -244,14 +244,20 @@ filename using the @ character.
         # Generate testcases
         logging.info("Finding test cases to run")
         if dbmanager and args.batch:
+            dbmanager.wait_for_batch = True
             job_id, _, batch_idx = args.batch.partition(',')
             job._dbid = job_id
             job._batch_size = 0
 
-            bid, paths = dbmanager.load_batch_tests(int(job_id), int(batch_idx))
+            bid, tests = dbmanager.load_batch_tests(int(job_id), int(batch_idx))
             job.batches[0]._dbid = bid
 
-            testcases = self.get_testcases_from_paths(paths)
+            testcases = []
+            for (dbid, path) in tests:
+                tc = TestCase(path)
+                tc._dbid = dbid
+                testcases.append(tc)
+
         else:
             testcases = self.get_testcases_from_paths(
                 args.filenames, exclude=args.exclude)
