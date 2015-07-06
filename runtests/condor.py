@@ -1,9 +1,9 @@
 """Condor scheduler support for test running"""
 from __future__ import print_function
 import logging
-import os
 import sys
 
+from .db import DBManager
 from .executor import Executor
 
 try:
@@ -23,8 +23,11 @@ class Condor(Executor):
     log_all = False
     other_args = None
 
+    __dbmanager__ = None
+
     def __init__(self, condor_req=machine_reqs, condor_exec=sub_exec,
                  condor_log=log_job, condor_log_all=log_all, **argv):
+        super(Condor, self).__init__(**argv)
         self.machine_reqs = condor_req
         self.sub_exec = condor_exec
         self.log_job = condor_log
@@ -33,21 +36,26 @@ class Condor(Executor):
         # Cache all other passed args for the argument string the executed job
         self.other_args = argv
 
+    def add_handler(self, handler):
+        if isinstance(handler, DBManager):
+            self.__dbmanager__ = handler
+        super(Condor, self).add_handler(handler)
+
     def run_job(self, job):
         # Submit job to Condor?
         print("Submitting to Condor Scheduler")
         n = self.condor_submit(job)
-        print("Submitted %s jobs to cluster %s on %s. Test job id: %s" %
+        print("Submitted %s batches as cluster %s on %s. Test job id: %s" %
               (n, job.condor_cluster, job.condor_scheduler, job._dbid))
-        dbmanager.update_object(job)
-        dbmanager.disconnect()
+
+        if self.__dbmanager__:
+            self.__dbmanager__.update_object(job)
+            self.__dbmanager__.disconnect()
         exit(0)
 
     def condor_submit(self, job):
-        c = classad.ClassAd()
-
         # Batch and testcase information :: What to run
-        batches = job.get_batches()
+        batches = job.batches
         n = len(batches)
 
         c = {
@@ -56,7 +64,7 @@ class Condor(Executor):
             'executable': sys.argv[0],
             'accounting_group': 'jscert.' + job.user,
             'getenv': 'True',    # Copy environment variables across
-            'arguments': '"%s"' % (self.build_arguments().replace('"', '""'))
+            'arguments': '"%s"' % (self.build_arguments(job).replace('"', '""'))
         }
 
         if self.log_all:
@@ -73,12 +81,12 @@ class Condor(Executor):
             f.writelines('%s = %s\n' % (k,v) for (k,v) in c.iteritems())
             f.write('queue %s' % n)
 
-        # TODO: via database and pre-allocated ids
-
-        job.condor_scheduler = machine
+        job.condor_scheduler = ""
         job.condor_cluster = 0 #TODO: parse from output
 
-    def build_arguments(self):
+        return n
+
+    def build_arguments(self, job):
         # Build argument string
         args_to_copy = [
             "db",
@@ -88,38 +96,29 @@ class Condor(Executor):
             "interp_path",
             "interp_version",
             "no_parasite",
-            "debug",
+            "parser",
             "verbose",
             "timeout",
-            "parser"
         ]
 
-        arguments = ["--condor_run"]
-        initial_args = vars(initial_args)
-        for (arg, val) in initial_args.iteritems():
+        for (arg, val) in self.other_args.iteritems():
+            arguments = []
             if val and arg in args_to_copy:
                 arguments.append("--%s" % arg)
                 if not isinstance(val, bool):
                     # Condor is picky about quote types
                     val = val.replace("'", "''")
                     arguments.append("'%s'" % val)
-        arguments.append("$$([tests[ProcId]])")
 
-        argstr = ' '.join(arguments)
+        # Executor to use for batches
+        arguments.append("-x")
+        arguments.append(self.sub_exec)
 
+        # Batch to run
+        arguments.append("--batch")
+        arguments.append("%s,$(Process)" % job._dbid)
 
-    def condor_update_job(self, job, dbmanager):
-        job._dbid = int(os.environ['_RUNTESTS_JOBID'])
-        batch = job.batches[0]
-        batch._dbid = int(os.environ['_RUNTESTS_BATCHID'])
-        batch.condor_proc = int(os.environ['_RUNTESTS_PROCID'])
-
-        tc_ids = os.environ['_RUNTESTS_TESTIDS'].split(",")
-        tcs = batch.get_testcases()
-        for (tc, tc_id) in zip(tcs, tc_ids):
-            tc._dbid = tc_id
-
-        return batch
+        return ' '.join(arguments)
 
     @staticmethod
     def add_arg_group(argp):

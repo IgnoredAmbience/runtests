@@ -48,7 +48,6 @@ class TestResultHandler(object):
         """Called on a handler when the test run is terminating due to SIGINT"""
         pass
 
-
 class CLIResultPrinter(TestResultHandler):
     # Some pretty colours for our output messages.
     NORMAL = "\033[00m"
@@ -58,7 +57,7 @@ class CLIResultPrinter(TestResultHandler):
     ABANDON = "\033[33m"
 
     verbose = False
-    failed = True
+    failed = False
 
     def __init__(self, verbose=False):
         self.verbose = verbose

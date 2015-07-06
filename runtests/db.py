@@ -36,7 +36,7 @@ class DBManager(TestResultHandler):
 
     def create_job_batches_runs(self, job):
         self.insert_object(job)
-        for batch in job.get_batches():
+        for batch in job.batches:
             self.insert_object(batch)
             for test in batch.get_testcases():
                 self.insert_object(test)
@@ -128,13 +128,15 @@ class DBManager(TestResultHandler):
         self.update_many(table, dicts)
 
     def load_batch_tests(self, job_id, batch_idx):
-        sql = """SELECT test_id FROM test_runs WHERE batch_id = (
-                   SELECT id FROM test_batches WHERE job_id = %s
-                   ORDER BY id LIMIT 1 OFFSET %s
-                 )"""
-        self.cur.execute(sql, (job_id, batch_idx))
-        results = [res[0] for res in self.cur.fetchall()]
-        return results
+        batch_id_sql = """SELECT id FROM test_batches WHERE job_id = %s ORDER BY
+                          id LIMIT 1 OFFSET %s"""
+        self.cur.execute(batch_id_sql, (job_id, batch_idx))
+        (batch_id,) = self.cur.fetchone()
+
+        tests_sql = "SELECT test_id FROM test_runs WHERE batch_id = %s"
+        self.cur.execute(tests_sql, (batch_id,))
+        tests = [res[0] for res in self.cur.fetchall()]
+        return (batch_id, tests)
 
     def import_schema(self):
         with open(DB_SCHEMA_LOCATION, 'r') as f:

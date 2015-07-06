@@ -251,7 +251,7 @@ class TestBatch(Timer, DBObject):
         return d
 
 
-class Job(DBObject):
+class Job(Timer, DBObject):
 
     """Information about a particular test job, a collection of TestBatches"""
 

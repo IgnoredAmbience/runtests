@@ -34,7 +34,7 @@ class Interpreter(SubclassSelectorMixin):
     ABORT = 2
     TIMEOUT = 3
 
-    def __init__(self):
+    def __init__(self, **args):
         if self.trashesinput:
             self.tmpdir = tempfile.mkdtemp()
 
@@ -112,14 +112,14 @@ class Interpreter(SubclassSelectorMixin):
         output = output.decode("utf8").encode("ascii", "xmlcharrefreplace")
         errors = errors.decode("utf8").encode("ascii", "xmlcharrefreplace")
         ret = test_pipe.returncode
-        if not result:
-            result = self.determine_result(testcase, ret, output, errors)
+        if result is None:
+            result = self.determine_result(ret)
 
         self.teardown()
 
         testcase.set_result(result, ret, output, errors)
 
-    def determine_result(self, testcase, ret, out, err):
+    def determine_result(self, ret):
         """Returns TestCase.{PASS,FAIL,ABORT} to indicate how the interpreter responded"""
         if ret == self.pass_code:
             return Interpreter.PASS
@@ -172,8 +172,9 @@ class JSRef(Interpreter):
     jsonparser = False
     trashesinput = True
 
-    def __init__(self, no_parasite=False, jsonparser=False):
+    def __init__(self, no_parasite=False, jsonparser=False, **args):
         Interpreter.__init__(self)
+        Interpreter.__init__(self, **args)
         self.no_parasite = no_parasite
         self.jsonparser = jsonparser
 

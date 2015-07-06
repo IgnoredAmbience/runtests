@@ -19,6 +19,7 @@ from .db import DBManager
 from .executor import Executor
 from .interpreter import Interpreter
 from .resulthandler import CLIResultPrinter, WebResultPrinter
+from .condor import Condor
 
 
 class Runtests(object):
@@ -119,7 +120,7 @@ filename using the @ character.
             help='Execution strategy to use (default: sequential)')
 
         argp.add_argument(
-            "--batch_size", action="store", metavar="n", default=0, type=int,
+            "--batch_size", action="store", metavar="n", default=4, type=int,
             help="Number of testcases to run per batch (default value varies"
             " depending on the executor used)")
 
@@ -207,7 +208,7 @@ filename using the @ character.
         args = argp.parse_args()
 
         # Configure logging
-        log_level = logging.DEBUG if args.verbose > 1 else logging.WARNING
+        log_level = logging.DEBUG if args.verbose > 1 else logging.INFO
         logging.basicConfig(level=log_level)
 
         # What to do if the user hits control-C
@@ -237,27 +238,37 @@ filename using the @ character.
         interpreter.set_version(args.interp_version)
         interpreter.set_timeout(args.timeout)
 
-        job = Job(args.title, args.note, interpreter)
+        job = Job(args.title, args.note, interpreter,
+                  batch_size=executor.get_batch_size())
 
         # Generate testcases
         logging.info("Finding test cases to run")
         if dbmanager and args.batch:
             job_id, _, batch_idx = args.batch.partition(',')
-            paths = dbmanager.load_batch_tests(int(job_id), int(batch_idx))
+            job._dbid = job_id
+            job._batch_size = 0
+
+            bid, paths = dbmanager.load_batch_tests(int(job_id), int(batch_idx))
+            job.batches[0]._dbid = bid
+
             testcases = self.get_testcases_from_paths(paths)
         else:
             testcases = self.get_testcases_from_paths(
                 args.filenames, exclude=args.exclude)
 
             if dbmanager:
-                print("Preloading test-cases into database...")
-                dbmanager.connect()
+                logging.info("Preloading test-cases into database...")
                 dbmanager.insert_testcases(testcases)  # auto-commits
-                print("Done!")
+                logging.info("Done preloading test-cases")
 
         job.add_testcases(testcases)
         logging.info("%s tests found, split into %s test batches.",
                     len(testcases), len(job.batches))
+
+        if dbmanager and not args.batch:
+            logging.info("Inserting job into database")
+            dbmanager.create_job_batches_runs(job)
+            logging.info("Done inserting job")
 
         executor.run_job(job)
 

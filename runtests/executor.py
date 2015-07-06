@@ -1,7 +1,6 @@
 from .resulthandler import TestResultHandler
 from .util import SubclassSelectorMixin
 
-
 class Executor(SubclassSelectorMixin):
 
     """Base class for different test execution strategies, for example:
