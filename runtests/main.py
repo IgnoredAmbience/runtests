@@ -101,8 +101,9 @@ filename using the @ character.
 
         argp.add_argument(
             "--timeout", action="store", metavar="timeout",
-            type=int, default=None,
-            help="Timeout in seconds for each testcase, defaults to None.")
+            type=int, default=540,
+            help="Timeout in seconds for each testcase, defaults to 5 minutes, "
+            "set to 0 for no timeout.")
 
         argp.add_argument(
             "--exclude", action="append", metavar="file",

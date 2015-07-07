@@ -68,7 +68,8 @@ class Interpreter(SubclassSelectorMixin):
             self.path = path
 
     def set_timeout(self, timeout):
-        self.timeout = timeout
+        if timeout:
+            self.timeout = timeout
 
     def setup(self):
         pass
