@@ -12,40 +12,17 @@ if sys.version_info < (3, 3):
 else:
     import subprocess
 
-from .db import DBObject
 from .interpreter import Interpreter
 from .main import JSCERT_ROOT_DIR
 from .resulthandler import TestResultHandler
 from .util import Timer
+from . import dbmodels
 
 
-class TestCase(Timer, DBObject):
 
-    """
-    A test case knows what file it came from, whether it has been run and if so,
-    whether it passed, failed or aborted, and what output it generated along the
-    way.
-    """
-    _table = "test_runs"
-    batch = None
-
-    # Fake-enum for result
-    UNKNOWN = 0
-    PASS = 1
-    FAIL = 2
-    ABORT = 3
-    TIMEOUT = 4
-    RESULT_TEXT = ["UNKNOWN", "PASS", "FAIL", "ABORT", "TIMEOUT"]
-
-    filename = ""
-    negative = False   # Whether the testcase is expected to fail
-    includes = None    # List of required JS helper files for test to run
-
-    # Test results
-    result = UNKNOWN   # Derived from exit_code by an interpreter class
-    exit_code = -1     # UNIX exit code
-    stdout = ""
-    stderr = ""
+class TestCase(dbmodels.TestCase):
+    # List of required JS helper files for test to run (not db-persisted)
+    includes = None
 
     def __init__(self, filename, lazy=False):
         self.filename = os.path.relpath(filename, JSCERT_ROOT_DIR)
@@ -61,6 +38,53 @@ class TestCase(Timer, DBObject):
                 self.negative = "@negative" in buf
                 self.includes = re.findall(
                     '\$INCLUDE\([\'"]([^\)]+)[\'"]\)', buf)
+
+    def is_negative(self):
+        self.fetch_file_info()
+        return self.negative
+
+    def get_includes(self):
+        self.fetch_file_info()
+        return self.includes
+
+    # Does this test try to load other libraries?
+    def usesInclude(self):
+        return len(self.get_includes()) > 0
+
+    def isLambdaS5Test(self):
+        return self.get_relpath().startswith("tests/LambdaS5/unit-tests/")
+
+    def isSpiderMonkeyTest(self):
+        return self.get_relpath().startswith("tests/SpiderMonkey/")
+
+    def get_relpath(self):
+        """Return path of test relative to JSCert project repo root directory"""
+        return self.filename
+
+    def get_realpath(self):
+        """Returns the real/absolute path to the test"""
+        return os.path.join(JSCERT_ROOT_DIR, self.filename)
+
+class TestRun(dbmodels.Run, Timer):
+
+    """
+    A test run knows what test case to run, whether it has been run and if so,
+    whether it passed, failed or aborted, and what output it generated along the
+    way.
+    """
+
+    # Fake-enum for result
+    UNKNOWN = "UNKNOWN"
+    PASS = "PASS"
+    FAIL = "FAIL"
+    ABORT = "ABORT"
+    TIMEOUT = "TIMEOUT"
+
+    # Test results
+    result = UNKNOWN   # Derived from exit_code by an interpreter class
+    exit_code = -1     # UNIX exit code
+    stdout = ""
+    stderr = ""
 
     def set_result(self, interp_result, exit_code, stdout, stderr):
         self.interp_result = interp_result
@@ -85,33 +109,25 @@ class TestCase(Timer, DBObject):
         self.stderr = stderr
 
     def get_testname(self):
-        return os.path.basename(self.filename)
+        return os.path.basename(self.testcase.filename)
 
     def get_result(self):
         return self.result
 
     def get_result_text(self):
-        return self.RESULT_TEXT[self.result]
+        return self.result
 
     def passed(self):
-        return self.result == self.PASS
+        return self.result == TestCase.PASS
 
     def failed(self):
-        return self.result == self.FAIL
+        return self.result == TestCase.FAIL
 
     def aborted(self):
-        return self.result == self.ABORT
+        return self.result == TestCase.ABORT
 
     def timeout(self):
-        return self.result == self.TIMEOUT
-
-    def get_relpath(self):
-        """Return path of test relative to JSCert project repo root directory"""
-        return self.filename
-
-    def get_realpath(self):
-        """Returns the real/absolute path to the test"""
-        return os.path.join(JSCERT_ROOT_DIR, self.filename)
+        return self.result == TestCase.TIMEOUT
 
     def report_dict(self):
         return {"testname": self.get_testname(),
@@ -119,80 +135,29 @@ class TestCase(Timer, DBObject):
                 "stdout": self.stdout,
                 "stderr": self.stderr}
 
-    def _db_dict(self):
-        d = {"test_id": self.get_relpath(),
-             "result": self.get_result_text(),
-             "exit_code": self.exit_code,
-             "stdout": self.stdout,
-             "stderr": self.stderr,
-             "duration": self.get_duration()}
-        if self.batch:
-            d['batch_id'] = self.batch._dbid
-        return d
+    # self.batch set by batch_id?
 
-    def db_tc_dict(self):
-        return {"id": self.get_relpath(),
-                "negative": self.negative}
-
-    def is_negative(self):
-        self.fetch_file_info()
-        return self.negative
-
-    def get_includes(self):
-        self.fetch_file_info()
-        return self.includes
-
-    # Does this test try to load other libraries?
-    def usesInclude(self):
-        return len(self.get_includes()) > 0
-
-    def isLambdaS5Test(self):
-        return self.get_relpath().startswith("tests/LambdaS5/unit-tests/")
-
-    def isSpiderMonkeyTest(self):
-        return self.get_relpath().startswith("tests/SpiderMonkey/")
-
-
-class TestBatch(Timer, DBObject):
+class TestBatch(dbmodels.Batch, Timer):
 
     """Information about a collection of TestCases to be run on a machine"""
-    _table = "test_batches"
-    job = None
 
-    # Machine info
-    system = ""
-    osnodename = ""
-    osrelease = ""
-    osversion = ""
-    hardware = ""
-
-    condor_proc = -1
-
-    pending_tests = None
-
-    # Classified test cases
-    passed_tests = None
-    failed_tests = None
-    aborted_tests = None
-
-    def __init__(self, job):
+    # @reconstructor
+    def __init__(self):
         self.pending_tests = deque()
         self.passed_tests = []
         self.failed_tests = []
         self.aborted_tests = []
-        self.job = job
 
     def __len__(self):
         return len(self.pending_tests)
 
     def add_testcase(self, testcase):
+        self.testcases.append(testcase)
         self.pending_tests.append(testcase)
-        testcase.batch = self
 
     def add_testcases(self, testcases):
+        self.testcases.extend(testcases)
         self.pending_tests.extend(testcases)
-        for tc in testcases:
-            tc.batch = self
 
     def has_testcase(self):
         return len(self.pending_tests) > 0
@@ -237,21 +202,8 @@ class TestBatch(Timer, DBObject):
                 "failures": map(lambda x: x.report_dict(), self.failed_tests),
                 "passes": map(lambda x: x.report_dict(), self.passed_tests)}
 
-    def _db_dict(self):
-        d = {"system": self.system,
-             "osnodename": self.osnodename,
-             "osrelease": self.osrelease,
-             "osversion": self.osversion,
-             "hardware": self.hardware,
-             "start_time": self.start_time,
-             "end_time": self.stop_time,
-             "condor_proc": self.condor_proc}
-        if self.job is not None:
-            d['job_id'] = self.job._dbid
-        return d
 
-
-class Job(Timer, DBObject):
+class Job(dbmodels.Job, Timer):
 
     """Information about a particular test job, a collection of TestBatches"""
 

@@ -182,22 +182,7 @@ filename using the @ character.
             help="Don't attempt to build an index.html for the reportdir")
 
         # Database config
-        db_args = argp.add_argument_group(title="Database options")
-        db_args.add_argument(
-            "--db", action="store", choices=['sqlite', 'postgres'],
-            help="Save the results of this testrun to the database")
-
-        db_args.add_argument(
-            "--dbpath", action="store", metavar="file", default="",
-            help="Path to the database (for SQLite) or configuration file (for "
-            "Postgres).")
-
-        db_args.add_argument("--db_init", action="store_true",
-                             help="Create the database and load schema")
-
-        db_args.add_argument(
-            "--db_pg_schema", action="store", metavar="name", default="jscert",
-            help="Schema of Postgres database to use. (Defaults to 'jscert')")
+        DBManager.add_arg_group(argp)
 
         return argp
 
@@ -281,5 +266,8 @@ filename using the @ character.
 
         exit(cli.get_exit_code())
 
-if __name__ == "__main__":
+def main():
     Runtests().main()
+
+if __name__ == "__main__":
+    main()

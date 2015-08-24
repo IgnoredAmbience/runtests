@@ -2,20 +2,20 @@ from datetime import datetime
 
 
 class Timer(object):
-    start_time = datetime.min
-    stop_time = datetime.min
-
     def start_timer(self):
         self.start_time = datetime.now()
+        self.stop_time = None
 
     def stop_timer(self):
+        if not self.start_time:
+            raise Exception('Timer not started')
         self.stop_time = datetime.now()
+        self.duration = self.get_delta().total_seconds()
 
     def get_delta(self):
+        if not self.start_time or not self.stop_time:
+            raise Exception('Timer not stopped')
         return self.stop_time - self.start_time
-
-    def get_duration(self):
-        return self.get_delta().total_seconds()
 
 
 class SubclassSelectorMixin(object):
@@ -27,16 +27,16 @@ class SubclassSelectorMixin(object):
     __generic_name__ = None
 
     def __init__(self, **nargs):
-        raise NotImplemented
+        raise NotImplementedError()
 
     @classmethod
-    def Construct(cls, name, args):
+    def Construct(cls, name, args={}):
         """Construct the appropriate subclass instance of name, using the
         an arguments object"""
         # pylint: disable=no-member
         name = name.lower()
 
-        if cls.__generic_name__ and name == cls.__generic_name__:
+        if cls.__generic_name__ and name == cls.__generic_name__.lower():
             return cls(**vars(args))
 
         for subcls in cls.__subclasses__():
