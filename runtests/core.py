@@ -128,6 +128,7 @@ class TestCase(Timer, DBObject):
              "duration": self.get_duration()}
         if self.batch:
             d['batch_id'] = self.batch._dbid
+            self.batch.add_job_id(d)
         return d
 
     def db_tc_dict(self):
@@ -237,6 +238,10 @@ class TestBatch(Timer, DBObject):
                 "failures": map(lambda x: x.report_dict(), self.failed_tests),
                 "passes": map(lambda x: x.report_dict(), self.passed_tests)}
 
+    def add_job_id(self, d):
+        if self.job is not None:
+            d['job_id'] = self.job._dbid
+
     def _db_dict(self):
         d = {"system": self.system,
              "osnodename": self.osnodename,
@@ -246,8 +251,7 @@ class TestBatch(Timer, DBObject):
              "start_time": self.start_time,
              "end_time": self.stop_time,
              "condor_proc": self.condor_proc}
-        if self.job is not None:
-            d['job_id'] = self.job._dbid
+        self.add_job_id(d)
         return d
 
 
