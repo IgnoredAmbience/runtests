@@ -34,7 +34,10 @@ class Interpreter(SubclassSelectorMixin):
     ABORT = 2
     TIMEOUT = 3
 
-    def __init__(self, **args):
+    def __init__(self, interp_path="", interp_version="", timeout=540, **args):
+        self.set_path(interp_path)
+        self.set_version(interp_version)
+        self.set_timeout(timeout)
         if self.trashesinput:
             self.tmpdir = tempfile.mkdtemp()
 
@@ -49,9 +52,6 @@ class Interpreter(SubclassSelectorMixin):
             self.version = version
         else:
             self.version = self.determine_version()
-
-    def set_parser(self):
-        pass
 
     def determine_version(self):
         if self.path:
@@ -173,16 +173,17 @@ class JSRef(Interpreter):
     jsonparser = False
     trashesinput = True
 
-    def __init__(self, no_parasite=False, jsonparser=False, **args):
-        Interpreter.__init__(self)
+    def __init__(self, no_parasite=False, jsonparser=False, parser="",
+                 **args):
         Interpreter.__init__(self, **args)
         self.no_parasite = no_parasite
         self.jsonparser = jsonparser
+        self.set_parser(parser)
 
     def get_name(self):
         return "JSRef"
 
-    def set_parser(self, parser=""):
+    def set_parser(self, parser):
         if parser:
             self.parser_path = parser
 
@@ -229,3 +230,12 @@ class JSRef(Interpreter):
         if self.no_parasite:
             arglist.append("-no-parasite")
         return arglist
+
+    @staticmethod
+    def add_arg_group(argp):
+        grp = argp.add_argument_group(title="JSRef Interpreter Options")
+        grp.add_argument("--jsonparser", action="store_true",
+                          help="Use the JSON parser (Esprima) when running tests.")
+
+        grp.add_argument("--no_parasite", action="store_true",
+                          help="Run JSRef with -no-parasite flag")

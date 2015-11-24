@@ -33,3 +33,12 @@ class JSIL(Interpreter):
         arglist.append(self.get_filepath(testcase.get_realpath()))
 
         return arglist
+
+    @staticmethod
+    def add_arg_group(argp):
+        grp = argp.add_argument_group(title="JSIL Interpreter Options")
+        grp.add_argument("--stats", action="store_true",
+                         help="Don't execute, just collect and report generated"
+                         " program statistics")
+        grp.add_argument("--simp", action="store_true",
+                         help="Enable IL simplification")

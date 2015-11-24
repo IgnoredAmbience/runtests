@@ -90,11 +90,6 @@ class Executor(SubclassSelectorMixin):
         for handler in self.handlers:
             handler.interrupt_handler()
 
-    @staticmethod
-    def add_arg_group(argp):
-        """Called to add arguments to the CLI, subclasses should override this"""
-        pass
-
 
 class Sequential(Executor):
 

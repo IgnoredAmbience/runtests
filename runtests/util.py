@@ -57,3 +57,8 @@ class SubclassSelectorMixin(object):
         # pylint: disable=no-member
         types = [cls.__generic_name__] if cls.__generic_name__ else []
         return types + [c.__name__.lower() for c in cls.__subclasses__()]
+
+    @staticmethod
+    def add_arg_group(argp):
+        """Called to add arguments to the CLI, subclasses could override this"""
+        pass

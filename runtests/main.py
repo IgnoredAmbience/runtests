@@ -156,11 +156,11 @@ filename using the @ character.
             help="The version of the interpreter you're running. (optional, "
             "value will be auto-detected if not provided)")
 
-        interp_grp.add_argument("--jsonparser", action="store_true",
-                                help="Use the JSON parser (Esprima) when running tests.")
+        for interpreter in Interpreter.Types():
+            interpreter.add_arg_group(argp)
 
-        interp_grp.add_argument("--no_parasite", action="store_true",
-                                help="Run JSRef with -no-parasite flag")
+        for executor in Executor.Types():
+            executor.add_arg_group(argp)
 
         report_grp = argp.add_argument_group(title="Report Options")
         report_grp.add_argument(
@@ -205,8 +205,6 @@ filename using the @ character.
     def main(self):
         # Parse arguments
         argp = self.build_arg_parser()
-        for executor in Executor.Types():
-            executor.add_arg_group(argp)
         args = argp.parse_args()
 
         # Configure logging
@@ -231,16 +229,7 @@ filename using the @ character.
                 args.templatedir, args.reportdir, args.noindex)
             executor.add_handler(webreport_handler)
 
-        # Interpreter
-        # TODO: Move to self-constructing (pluggable) interpreters
-        # TODO: (and hence) JSIL options
         interpreter = Interpreter.Construct(args.interp, args)
-        interpreter.no_parasite = args.no_parasite
-        interpreter.jsonparser = args.jsonparser
-        interpreter.set_parser(args.parser)
-        interpreter.set_path(args.interp_path)
-        interpreter.set_version(args.interp_version)
-        interpreter.set_timeout(args.timeout)
 
         job = Job(args.title, args.note, interpreter,
                   batch_size=executor.get_batch_size())
