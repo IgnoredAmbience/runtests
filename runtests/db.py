@@ -6,8 +6,8 @@ try:
 except ImportError:
     psycopg2 = None
 
-from resulthandler import TestResultHandler
-from main import JSCERT_ROOT_DIR
+from .resulthandler import TestResultHandler
+from .main import JSCERT_ROOT_DIR
 
 DB_SCHEMA_LOCATION = os.path.join(
     JSCERT_ROOT_DIR, 'test_data', 'createTestDB.sql')

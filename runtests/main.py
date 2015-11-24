@@ -20,6 +20,7 @@ from .executor import Executor
 from .interpreter import Interpreter
 from .resulthandler import CLIResultPrinter, WebResultPrinter
 from .condor import Condor
+from . import jsil
 
 
 class Runtests(object):
@@ -231,6 +232,8 @@ filename using the @ character.
             executor.add_handler(webreport_handler)
 
         # Interpreter
+        # TODO: Move to self-constructing (pluggable) interpreters
+        # TODO: (and hence) JSIL options
         interpreter = Interpreter.Construct(args.interp, args)
         interpreter.no_parasite = args.no_parasite
         interpreter.jsonparser = args.jsonparser
