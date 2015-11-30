@@ -48,7 +48,7 @@ class TestCase(Timer, DBObject):
     stderr = ""
 
     def __init__(self, filename, lazy=False):
-        self.filename = os.path.relpath(filename, JSCERT_ROOT_DIR)
+        self.filename = os.path.realpath(filename)
         if not lazy:
             self.fetch_file_info()
 
@@ -111,7 +111,7 @@ class TestCase(Timer, DBObject):
 
     def get_realpath(self):
         """Returns the real/absolute path to the test"""
-        return os.path.join(JSCERT_ROOT_DIR, self.filename)
+        return self.filename
 
     def report_dict(self):
         return {"testname": self.get_testname(),
