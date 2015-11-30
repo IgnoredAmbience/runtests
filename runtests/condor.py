@@ -119,6 +119,8 @@ class Condor(Executor):
             "parser",
             "verbose",
             "timeout",
+            "simp",
+            "stats",
         ]
 
         arguments = []

@@ -125,7 +125,7 @@ class TestCase(Timer, DBObject):
              "exit_code": self.exit_code,
              "stdout": self.stdout,
              "stderr": self.stderr,
-             "duration": self.get_duration()}
+             "duration": self.get_delta()}
         if self.batch:
             d['batch_id'] = self.batch._dbid
             self.batch.add_job_id(d)
@@ -285,8 +285,8 @@ class Job(Timer, DBObject):
         self.interpreter = interpreter
         self.create_time = datetime.now()
         self.impl_name = interpreter.get_name()
-        self.impl_version = interpreter.get_version()
         self.set_repo_version()
+        self.impl_version = interpreter.get_version()
         self.user = pwd.getpwuid(os.geteuid()).pw_name
 
         self._batch_size = batch_size

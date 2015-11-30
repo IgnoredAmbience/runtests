@@ -12,7 +12,7 @@ import signal
 from functools import reduce
 
 JSCERT_ROOT_DIR = os.path.realpath(
-    os.path.join(os.path.dirname(__file__), "..", ".."))
+    os.path.join(os.path.dirname(__file__), ".."))
 
 from .core import Job, TestCase
 from .db import DBManager
@@ -197,8 +197,8 @@ filename using the @ character.
                              help="Create the database and load schema")
 
         db_args.add_argument(
-            "--db_pg_schema", action="store", metavar="name", default="jscert",
-            help="Schema of Postgres database to use. (Defaults to 'jscert')")
+            "--db_pg_schema", action="store", metavar="name", default="jsil",
+            help="Schema of Postgres database to use. (Defaults to 'jsil')")
 
         return argp
 

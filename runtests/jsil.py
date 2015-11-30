@@ -1,10 +1,11 @@
 from .interpreter import Interpreter
+import os
 
 
 class JSIL(Interpreter):
     # Class configuration options
     trashesinput = True
-    path = 'interpreter_run.byte'
+    path = './interpreter_run.native'
 
     # Execution options
     stats = False
@@ -19,6 +20,9 @@ class JSIL(Interpreter):
         return "JSIL"
 
     def get_version(self):
+        return ""
+
+    def determine_version(self):
         return ""
 
     def build_args(self, testcase):
