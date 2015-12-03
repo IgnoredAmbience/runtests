@@ -25,16 +25,18 @@ class Condor(Executor):
     log_job = False
     log_all = False
     other_args = None
+    arg_parser = None
 
     __dbmanager__ = None
 
     def __init__(self, condor_req=machine_reqs, condor_exec=sub_exec,
-                 condor_log=log_job, condor_log_all=log_all, **argv):
+                 condor_log=log_job, condor_log_all=log_all, arg_parser=None, **argv):
         super(Condor, self).__init__(**argv)
         self.machine_reqs = condor_req
         self.sub_exec = condor_exec
         self.log_job = condor_log
         self.log_all = condor_log_all
+        self.arg_parser = arg_parser
 
         # Cache all other passed args for the argument string the executed job
         self.other_args = argv
@@ -125,7 +127,7 @@ class Condor(Executor):
 
         arguments = []
         for (arg, val) in self.other_args.iteritems():
-            if val and arg in args_to_copy:
+            if (arg in args_to_copy) and (val is not self.arg_parser.get_default(arg)):
                 arguments.append("--%s" % arg)
                 if not isinstance(val, bool):
                     # Condor is picky about quote types

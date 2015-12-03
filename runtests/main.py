@@ -206,6 +206,7 @@ filename using the @ character.
         # Parse arguments
         argp = self.build_arg_parser()
         args = argp.parse_args()
+        args.arg_parser = argp
 
         # Configure logging
         log_level = logging.DEBUG if args.verbose > 1 else logging.INFO

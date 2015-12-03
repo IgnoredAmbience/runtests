@@ -63,13 +63,15 @@ class Interpreter(SubclassSelectorMixin):
         else:
             return "Unknown version"
 
+    def set_timeout(self, timeout):
+        if timeout < 1:
+            self.timeout = None
+        else:
+            self.timeout = timeout
+
     def set_path(self, path):
         if path:
             self.path = path
-
-    def set_timeout(self, timeout):
-        if timeout:
-            self.timeout = timeout
 
     def setup(self):
         pass
