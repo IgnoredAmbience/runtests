@@ -17,6 +17,7 @@ from .interpreter import Interpreter
 from .main import JSCERT_ROOT_DIR
 from .resulthandler import TestResultHandler
 from .util import Timer
+from .parseTestRecord import parseTestRecord
 
 
 class TestCase(Timer, DBObject):
@@ -38,7 +39,10 @@ class TestCase(Timer, DBObject):
     RESULT_TEXT = ["UNKNOWN", "PASS", "FAIL", "ABORT", "TIMEOUT"]
 
     filename = ""
+    test_record_loaded = False
     negative = False   # Whether the testcase is expected to fail
+    nostrict = False
+    onlystrict = False
     includes = None    # List of required JS helper files for test to run
 
     # Test results
@@ -47,20 +51,26 @@ class TestCase(Timer, DBObject):
     stdout = ""
     stderr = ""
 
+
     def __init__(self, filename, lazy=False):
         self.filename = os.path.realpath(filename)
         if not lazy:
             self.fetch_file_info()
 
     def fetch_file_info(self):
-        if self.includes is None:
+        if not self.test_record_loaded:
             with open(self.get_realpath()) as f:
-                # If this was a sputnik test, it may have expected to fail.
-                # If so, we will need to invert the return value later on.
                 buf = f.read()
-                self.negative = "@negative" in buf
-                self.includes = re.findall(
-                    '\$INCLUDE\([\'"]([^\)]+)[\'"]\)', buf)
+                test_record = parseTestRecord(buf, self.filename)
+                self.negative = 'negative' in test_record
+                self.onlystrict = 'onlyStrict' in test_record
+                self.nostrict = 'noStrict' in test_record or 'raw' in test_record
+                if test_record.get('includes'):
+                    self.includes = test_record['includes']
+                else:
+                    self.includes = []
+
+                self.test_record_loaded = True
 
     def set_result(self, interp_result, exit_code, stdout, stderr):
         self.interp_result = interp_result
@@ -133,7 +143,9 @@ class TestCase(Timer, DBObject):
 
     def db_tc_dict(self):
         return {"id": self.get_relpath(),
-                "negative": self.negative}
+                "negative": self.negative,
+                "onlystrict": self.onlystrict,
+                "nostrict": self.nostrict}
 
     def is_negative(self):
         self.fetch_file_info()
