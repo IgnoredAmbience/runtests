@@ -123,6 +123,7 @@ class Condor(Executor):
             "timeout",
             "simp",
             "stats",
+            "byte",
         ]
 
         arguments = []

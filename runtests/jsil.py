@@ -5,16 +5,20 @@ import os
 class JSIL(Interpreter):
     # Class configuration options
     trashesinput = True
-    path = './interpreter_run.native'
 
     # Execution options
     stats = False
     simp = False
+    byte = False
 
-    def __init__(self, stats=False, simp=False, **args):
+    def __init__(self, stats=False, simp=False, byte=False, **args):
         Interpreter.__init__(self, **args)
         self.stats = stats
         self.simp = simp
+        if byte:
+            self.path = './interpreter_run.byte'
+        else:
+            self.path = './interpreter_run.native'
 
     def get_name(self):
         return "JSIL"
@@ -48,3 +52,5 @@ class JSIL(Interpreter):
                          " program statistics")
         grp.add_argument("--simp", action="store_true",
                          help="Enable IL simplification")
+        grp.add_argument("--byte", action="store_true",
+                         help="Use bytecode version")
