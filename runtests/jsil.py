@@ -26,9 +26,11 @@ class JSIL(Interpreter):
         return ""
 
     def build_args(self, testcase):
-        arglist = [self.path, '-test_prelude', self.get_filepath('test_prelude_es6.js')]
+
         if self.stats:
-            arglist.append('-stats')
+            arglist = ['/usr/bin/time', '-p', self.path, '-stats']
+        else:
+            arglist = [self.path, '-test_prelude', self.get_filepath('test_prelude_es6.js')]
 
         if self.simp:
             arglist.append('-simp')
