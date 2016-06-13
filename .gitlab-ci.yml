@@ -1,0 +1,14 @@
+stages:
+  - test
+  - integration
+
+condor:
+  script:
+    - ./runtests.py --interp generic --interp_path true --executor condor --batch_size 1 --condor_log test/samples/
+    - condor_wait -status -echo job_*_condor_*.log
+
+  stage: integration
+  tags:
+    - condor
+
+  
