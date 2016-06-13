@@ -188,7 +188,7 @@ filename using the @ character.
         db_args.add_argument(
             "--dbpath", action="store", metavar="file", default="",
             help="Path to the database (for SQLite) or configuration file (for "
-            "Postgres).")
+            "Postgres, or set RUNTESTS_DB environment variable).")
 
         db_args.add_argument("--db_init", action="store_true",
                              help="Create the database and load schema")

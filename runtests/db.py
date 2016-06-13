@@ -155,15 +155,16 @@ class DBManager(TestResultHandler):
                 dbmanager = SQLiteDBManager(args.dbpath, args.db_init)
 
             elif args.db == "postgres":
-                if not args.dbpath:
-                    args.dbpath = os.path.join(".pgconfig")
-                try:
+                if args.dbpath:
                     with open(args.dbpath, "r") as f:
-                        dbmanager = PostgresDBManager(
-                            f.readline(), args.db_pg_schema)
-                except IOError as e:
-                    raise Exception(
-                        "Could not open postgres configuration: %s" % e)
+                        connstr = f.readline()
+                elif 'RUNTESTS_DB' in os.environ:
+                    connstr = os.environ['RUNTESTS_DB']
+                else:
+                    with open(".pgconfig", "r") as f:
+                        connstr = f.readline()
+
+            dbmanager = PostgresDBManager(connstr, args.db_pg_schema)
 
             if args.db_init:
                 dbmanager.connect()
