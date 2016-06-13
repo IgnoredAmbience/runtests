@@ -7,11 +7,6 @@ except ImportError:
     psycopg2 = None
 
 from .resulthandler import TestResultHandler
-from .main import JSCERT_ROOT_DIR
-
-DB_SCHEMA_LOCATION = os.path.join(
-    JSCERT_ROOT_DIR, 'test_data', 'createTestDB.sql')
-
 
 class DBManager(TestResultHandler):
     conn = None
@@ -138,11 +133,7 @@ class DBManager(TestResultHandler):
         return (batch_id, self.cur.fetchall())
 
     def import_schema(self):
-        with open(DB_SCHEMA_LOCATION, 'r') as f:
-            sql = f.read()
-        sql = self.prepare_schema(sql)
-        self.execute_script(sql)
-        self.conn.commit()
+        raise NotImplementedError
 
     def execute_script(self, sql):
         self.cur.execute(sql)
@@ -159,14 +150,13 @@ class DBManager(TestResultHandler):
         if args.db:
             if args.db == "sqlite":
                 if not args.dbpath:
-                    args.dbpath = os.path.join(
-                        JSCERT_ROOT_DIR, "test_data", "test_results.db")
+                    args.dbpath = os.path.join("test_results.db")
 
                 dbmanager = SQLiteDBManager(args.dbpath, args.db_init)
 
             elif args.db == "postgres":
                 if not args.dbpath:
-                    args.dbpath = os.path.join(JSCERT_ROOT_DIR, ".pgconfig")
+                    args.dbpath = os.path.join(".pgconfig")
                 try:
                     with open(args.dbpath, "r") as f:
                         dbmanager = PostgresDBManager(

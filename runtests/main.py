@@ -11,9 +11,6 @@ import os
 import signal
 from functools import reduce
 
-JSCERT_ROOT_DIR = os.path.realpath(
-    os.path.join(os.path.dirname(__file__), ".."))
-
 from .core import Job, TestCase
 from .db import DBManager
 from .executor import Executor

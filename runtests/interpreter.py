@@ -10,7 +10,6 @@ if sys.version_info < (3, 3):
 else:
     import subprocess
 
-from .main import JSCERT_ROOT_DIR
 from .util import SubclassSelectorMixin
 
 
@@ -168,7 +167,7 @@ class LambdaS5(Interpreter):
 
 
 class JSRef(Interpreter):
-    interp_dir = os.path.join(JSCERT_ROOT_DIR, "interp")
+    interp_dir = os.path.join("interp")
     path = os.path.join(interp_dir, "run_js")
     parser_path = os.path.join(interp_dir, "parser", "lib", "js_parser.jar")
     no_parasite = False

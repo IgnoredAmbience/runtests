@@ -14,7 +14,6 @@ else:
 
 from .db import DBObject
 from .interpreter import Interpreter
-from .main import JSCERT_ROOT_DIR
 from .resulthandler import TestResultHandler
 from .util import Timer
 from .parseTestRecord import parseTestRecord
@@ -309,7 +308,7 @@ class Job(Timer, DBObject):
 
     def set_repo_version(self):
         out = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=JSCERT_ROOT_DIR)
+            ["git", "rev-parse", "HEAD"])
         self.repo_version = out.strip()
 
     def new_batch(self):
