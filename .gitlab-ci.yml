@@ -18,7 +18,6 @@ git-sync:
   - echo "$PUSH_KEY" | ssh-add -
   script:
   - git sync-remote git@github.com:edgemaster/runtests.git git@gitlab.doc.ic.ac.uk:tw1509/runtests.git
-  after_script:
   - ssh-agent -k
   only:
   - triggers
