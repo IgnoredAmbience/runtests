@@ -43,17 +43,20 @@ CREATE TABLE test_batches
 CREATE TABLE test_cases
   ( id text primary key  /* path is relative to jscert root directory */
   , negative boolean
+  , nostrict boolean
+  , onlystrict boolean
   );
 
 CREATE TABLE test_runs
   ( id integer primary key autoincrement
   , test_id text references test_cases(id)
   , batch_id integer references test_batches(id)
+  , job_id integer references test_jobs(id)
   , result result_text
   , exit_code smallint
   , stdout text
   , stderr text
-  , duration integer
+  , duration interval
   );
 
 CREATE TABLE test_groups
