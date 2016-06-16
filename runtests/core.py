@@ -307,9 +307,11 @@ class Job(Timer, DBObject):
         self.new_batch()
 
     def set_repo_version(self):
-        out = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"])
-        self.repo_version = out.strip()
+        if "CI_BUILD_REF" in os.environ:
+            self.repo_version = os.environ["CI_BUILD_REF"]
+        else:
+            out = subprocess.check_output(["git", "rev-parse", "HEAD"])
+            self.repo_version = out.strip()
 
     def new_batch(self):
         self.batches.append(TestBatch(self))
