@@ -47,6 +47,9 @@ class Condor(Executor):
         super(Condor, self).add_handler(handler)
 
     def run_job(self, job):
+        if not self.__dbmanager__:
+            raise ValueError("Cannot submit Condor job without database")
+
         # Submit job to Condor?
         jobstr = self.build_job(job)
 

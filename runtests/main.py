@@ -215,7 +215,6 @@ filename using the @ character.
         self.executor = executor = Executor.Construct(args.executor, args)
 
         dbmanager = DBManager.from_args(args)
-
         executor.add_handler(dbmanager)
 
         # Output handlers
@@ -234,7 +233,10 @@ filename using the @ character.
 
         # Generate testcases
         logging.info("Finding test cases to run")
-        if dbmanager and args.batch:
+        if args.batch:
+            if not dbmanager:
+                raise ValueError("Loading tests from a batch requires a db")
+
             dbmanager.wait_for_batch = True
             job_id, _, batch_idx = args.batch.partition(',')
             job._dbid = job_id
