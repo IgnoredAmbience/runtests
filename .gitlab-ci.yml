@@ -2,6 +2,7 @@
 stages:
 - test
 - integration
+
 condor:
   before_script:
   - source scripts/set-voldir.sh runtests

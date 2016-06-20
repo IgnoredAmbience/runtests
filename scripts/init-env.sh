@@ -5,7 +5,7 @@ source $dir/env/bin/activate
 pip install --upgrade -r $dir/requirements.txt
 
 if [ -d $VOLDIR ]; then
-  virtualenv-clone env $VOLDIR/env
+  virtualenv-clone $dir/env $VOLDIR/env
   deactivate
   source $VOLDIR/env/bin/activate
 fi
