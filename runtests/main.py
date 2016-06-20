@@ -34,7 +34,6 @@ class Runtests(object):
             paths, [])
 
     def get_testcases_from_path(self, path, testcases=[], exclude=[]):
-        path = os.path.realpath(path)
         if not os.path.exists(path):
             raise IOError("No such file or directory: %s" % path)
 
@@ -48,7 +47,6 @@ class Runtests(object):
     def get_testcases_from_dir(self, dirname, testcases=[], exclude=[]):
         """ Recusively walk the given directory looking for .js files, does not
             traverse symbolic links"""
-        dirname = os.path.realpath(dirname)
         for r, d, f in os.walk(dirname):
             for filename in f:
                 filename = os.path.join(r, filename)
