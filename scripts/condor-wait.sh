@@ -13,3 +13,7 @@ until (($count > 40)) || condor_wait -wait 60 $RUNTESTS_CONDOR_LOG; do
   fi
   ((count++))
 done
+
+# Clean-up the rest, as we've given up (timeout failed?)
+condor_rm $RUNTESTS_CONDOR_ID
+# TODO: Output an error message detailing how to restart these tasks manually
