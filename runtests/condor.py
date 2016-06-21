@@ -2,6 +2,7 @@
 from __future__ import print_function
 import logging
 import os
+import stat
 import re
 import subprocess
 import sys
@@ -79,6 +80,18 @@ class Condor(Executor):
     def build_job(self, job):
         # Batch and testcase information :: What to run
         n = len(job.batches)
+
+        # Move the RUNTESTS_DB environment variable to a dbconfig file because
+        # it contains password, globally readable from condor
+        if 'RUNTESTS_DB' in os.environ:
+            if 'dbpath' not in self.other_args:
+                self.other_args['dbpath'] = '.pgconfig.tmp'
+
+                with open('.pgconfig.tmp', 'w') as f:
+                    os.fchmod(f, stat.S_IRUSR | stat.S_IWUSR)
+                    f.write(os.environ['RUNTESTS_DB'])
+
+            del os.environ['RUNTESTS_DB']
 
         c = {
             'universe': 'vanilla',
