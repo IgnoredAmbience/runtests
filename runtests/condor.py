@@ -19,6 +19,10 @@ except ImportError as ex:
 
 class Condor(Executor):
 
+    LOG_JOB_FILE = "job_%s_condor_$(Cluster).log"
+    LOG_OUT_FILE = "job_%s_condor_$(Cluster)-$(Process).out"
+    LOG_ERR_FILE = "job_%s_condor_$(Cluster)-$(Process).err"
+
     # Default class selections, see argument help for details
     machine_reqs = 'OpSysMajorVer > 12'
     sub_exec = 'sequential'
@@ -65,6 +69,8 @@ class Condor(Executor):
         print("Submitted %s batches as cluster %s on %s. Test job id: %s" %
               (len(job.batches), job.condor_cluster, job.condor_scheduler, job._dbid))
 
+        self.write_jobinfo(job)
+
         if self.__dbmanager__:
             self.__dbmanager__.update_object(job)
             self.__dbmanager__.disconnect()
@@ -78,19 +84,17 @@ class Condor(Executor):
             'universe': 'vanilla',
             'requirements': self.machine_reqs,
             'executable': sys.argv[0],
-            'accounting_group': 'jscert.' + job.user,
+            'accounting_group': 'jscert',
             'getenv': 'True',    # Copy environment variables across
             'arguments': '"%s"' % (self.build_arguments(job).replace('"', '""'))
         }
 
         if self.log_all:
-            c['output'] = "job_%s_condor_$(Cluster)-$(Process).out" % \
-                job._dbid
-            c['error'] = "job_%s_condor_$(Cluster)-$(Process).err" % \
-                job._dbid
+            c['output'] = self.LOG_OUT_FILE % job._dbid
+            c['error'] = self.LOG_ERR_FILE % job._dbid
 
         if self.log_job:
-            c['log'] = "job_%s_condor_$(Cluster).log" % job._dbid
+            c['log'] = self.LOG_JOB_FILE % job._dbid
 
         jobstr = '\n'.join('%s = %s\n' % (k, v) for (k, v) in c.iteritems())
         jobstr += '\nqueue %s' % n
@@ -147,6 +151,16 @@ class Condor(Executor):
         arguments.append("%s,$(Process)" % job._dbid)
 
         return ' '.join(arguments)
+
+    def write_jobinfo(self, job):
+        jobinfo = {'JOB_ID': job._dbid, 'CONDOR_ID': job.condor_cluster}
+        if self.log_job:
+            jobinfo['CONDOR_LOG'] = (self.LOG_JOB_FILE % job._dbid) \
+                .replace('$(Cluster)', job.condor_cluster)
+
+        with open('condor.jobinfo', 'w') as f:
+            for item in jobinfo.iteritems():
+                f.write("export RUNTESTS_%s=%s\n" % item)
 
     @staticmethod
     def add_arg_group(argp):

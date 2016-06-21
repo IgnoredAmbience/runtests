@@ -7,13 +7,14 @@ condor:
   before_script:
   - source scripts/set-voldir.sh runtests
   - source scripts/init-env.sh
-  - cp -R runtests* test $VOLDIR
+  - cp -R runtests* test scripts $VOLDIR
   - cd $VOLDIR
   script:
   - ./runtests.py --interp generic --interp_path true --executor condor --batch_size 1 --condor_log --condor_log_all --db postgres --db_pg_schema runtests test/samples/
-  - condor_wait -status -echo job_*_condor_*.log
-  after_script:
-  - scripts/clean-voldir.sh runtests
+  - scripts/condor-wait.sh
+  #- condor_wait -status -echo job_*_condor_*.log
+  #after_script:
+  #- scripts/clean-voldir.sh runtests
   cache:
     key: all
     paths:
