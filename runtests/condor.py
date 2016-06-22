@@ -137,7 +137,7 @@ class Condor(Executor):
         # Move the RUNTESTS_DB environment variable to a dbconfig file because
         # it contains password, globally readable from condor
         if 'RUNTESTS_DB' in os.environ:
-            if not self.other_args['dbpath']
+            if not self.other_args['dbpath']:
                 self.other_args['dbpath'] = '.pgconfig.tmp'
 
                 with open('.pgconfig.tmp', 'w') as f:
