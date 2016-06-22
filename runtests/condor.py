@@ -81,18 +81,6 @@ class Condor(Executor):
         # Batch and testcase information :: What to run
         n = len(job.batches)
 
-        # Move the RUNTESTS_DB environment variable to a dbconfig file because
-        # it contains password, globally readable from condor
-        if 'RUNTESTS_DB' in os.environ:
-            if 'dbpath' not in self.other_args:
-                self.other_args['dbpath'] = '.pgconfig.tmp'
-
-                with open('.pgconfig.tmp', 'w') as f:
-                    os.fchmod(f, stat.S_IRUSR | stat.S_IWUSR)
-                    f.write(os.environ['RUNTESTS_DB'])
-
-            del os.environ['RUNTESTS_DB']
-
         c = {
             'universe': 'vanilla',
             'requirements': self.machine_reqs,
@@ -130,7 +118,7 @@ class Condor(Executor):
 
     def build_arguments(self, job):
         # Build argument string
-        args_to_copy = [
+        ARGS_TO_COPY = [
             "db",
             "dbpath",
             "db_pg_schema",
@@ -146,9 +134,21 @@ class Condor(Executor):
             "byte",
         ]
 
+        # Move the RUNTESTS_DB environment variable to a dbconfig file because
+        # it contains password, globally readable from condor
+        if 'RUNTESTS_DB' in os.environ:
+            if not self.other_args['dbpath']
+                self.other_args['dbpath'] = '.pgconfig.tmp'
+
+                with open('.pgconfig.tmp', 'w') as f:
+                    os.fchmod(f.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+                    f.write(os.environ['RUNTESTS_DB'])
+
+            del os.environ['RUNTESTS_DB']
+
         arguments = []
         for (arg, val) in self.other_args.iteritems():
-            if (arg in args_to_copy) and (val is not self.arg_parser.get_default(arg)):
+            if (arg in ARGS_TO_COPY) and (val is not self.arg_parser.get_default(arg)):
                 arguments.append("--%s" % arg)
                 if not isinstance(val, bool):
                     # Condor is picky about quote types
