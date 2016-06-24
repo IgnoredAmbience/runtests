@@ -12,9 +12,8 @@ condor:
   script:
   - ./runtests.py --interp generic --interp_path true --executor condor --batch_size 1 --condor_log --condor_log_all --db postgres --db_pg_schema runtests test/samples/
   - scripts/condor-wait.sh
-  #- condor_wait -status -echo job_*_condor_*.log
-  #after_script:
-  #- scripts/clean-voldir.sh runtests
+  after_script:
+  - scripts/clean-voldir.sh runtests
   cache:
     key: all
     paths:
