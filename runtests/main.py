@@ -237,14 +237,16 @@ filename using the @ character.
 
             dbmanager.wait_for_batch = True
             job_id, _, batch_idx = args.batch.partition(',')
+            job_id, batch_idx = int(job_id), int(batch_idx)
+
             job._dbid = job_id
             job._batch_size = 0
 
-            bid, tests = dbmanager.load_batch_tests(int(job_id), int(batch_idx))
-            job.batches[0]._dbid = bid
-
+            tests = dbmanager.load_batch_tests(job_id, batch_idx)
+            job.batches[0]._dbid = tests[0][2]
+            job.batches[0].condor_proc = batch_idx
             testcases = []
-            for (dbid, path) in tests:
+            for dbid, path, _ in tests:
                 tc = TestCase(path)
                 tc._dbid = dbid
                 testcases.append(tc)

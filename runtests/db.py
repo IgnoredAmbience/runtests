@@ -31,10 +31,13 @@ class DBManager(TestResultHandler):
 
     def create_job_batches_runs(self, job):
         self.insert_object(job)
+        x = 0
         for batch in job.batches:
+            batch.condor_proc = x
             self.insert_object(batch)
             for test in batch.get_testcases():
                 self.insert_object(test)
+            x += 1
         self.conn.commit()
 
     def start_batch(self, batch):
@@ -123,14 +126,11 @@ class DBManager(TestResultHandler):
         self.update_many(table, dicts)
 
     def load_batch_tests(self, job_id, batch_idx):
-        batch_id_sql = """SELECT id FROM test_batches WHERE job_id = %s ORDER BY
-                          id LIMIT 1 OFFSET %s"""
-        self.cur.execute(batch_id_sql, (job_id, batch_idx))
-        (batch_id,) = self.cur.fetchone()
-
-        tests_sql = "SELECT id, test_id FROM test_runs WHERE batch_id = %s"
-        self.cur.execute(tests_sql, (batch_id,))
-        return (batch_id, self.cur.fetchall())
+        tests_sql = "SELECT test_runs.id, test_id, batch_id " \
+                    "FROM test_runs JOIN test_batches ON (batch_id = test_batches.id) " \
+                    "WHERE test_batches.job_id = %s AND condor_proc = %s"
+        self.cur.execute(tests_sql, (job_id, batch_idx))
+        return self.cur.fetchall()
 
     def import_schema(self):
         raise NotImplementedError
