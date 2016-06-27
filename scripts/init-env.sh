@@ -1,6 +1,6 @@
 #!/bin/bash
 dir=$(readlink -f $(dirname ${BASH_SOURCE[0]})/..)
-virtualenv -p python2 $dir/env
+virtualenv --always-copy -p python2 $dir/env
 source $dir/env/bin/activate
 pip install --upgrade -r $dir/requirements.txt
 
