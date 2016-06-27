@@ -9,6 +9,7 @@ import argparse
 import logging
 import os
 import signal
+import sys
 from functools import reduce
 
 from .core import Job, TestCase
@@ -17,6 +18,7 @@ from .executor import Executor
 from .interpreter import Interpreter
 from .resulthandler import CLIResultPrinter, WebResultPrinter
 from .condor import Condor
+from .util import MaxLevelFilter
 from . import jsil
 
 
@@ -205,7 +207,15 @@ filename using the @ character.
 
         # Configure logging
         log_level = logging.DEBUG if args.verbose > 1 else logging.INFO
-        logging.basicConfig(level=log_level)
+
+        stderr_log = logging.StreamHandler(stream=sys.stderr)
+        stderr_log.setLevel(logging.WARNING)
+        logging.getLogger('').addHandler(stderr_log)
+
+        stdout_log = logging.StreamHandler(stream=sys.stdout)
+        stdout_log.setLevel(log_level)
+        stderr_log.addFilter(MaxLevelFilter(logging.WARNING))
+        logging.getLogger('').addHandler(stdout_log)
 
         # What to do if the user hits control-C
         signal.signal(signal.SIGINT, self.interrupt_handler)

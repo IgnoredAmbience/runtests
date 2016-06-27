@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 
 
 class Timer(object):
@@ -62,3 +63,15 @@ class SubclassSelectorMixin(object):
     def add_arg_group(argp):
         """Called to add arguments to the CLI, subclasses could override this"""
         pass
+
+
+class MaxLevelFilter(logging.Filter):
+    """
+    This is a logging filter that ignores log records below a certain level.
+    """
+
+    def __init__(self, maxlevel):
+        self.maxlevel = maxlevel
+
+    def filter(self, record):
+        return record.levelno >= self.maxlevel
