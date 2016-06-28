@@ -25,7 +25,11 @@ class Condor(Executor):
     LOG_ERR_FILE = "job_%s_condor_$(Cluster)-$(Process).err"
 
     # Default class selections, see argument help for details
-    machine_reqs = 'OpSysMajorVer >= 14 && Machine != "yam.doc.ic.ac.uk"'
+    # Yes, the defaults are terribly DoC-specific
+    machine_reqs = 'OpSysMajorVer >= 14'
+    machine_reqs += '&& Machine != "yam.doc.ic.ac.uk"'
+    machine_reqs += '&& Machine != "wen.doc.ic.ac.uk"'
+
     sub_exec = 'sequential'
     log_job = False
     log_all = False
