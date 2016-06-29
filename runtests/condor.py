@@ -129,6 +129,7 @@ class Condor(Executor):
             "interp",
             "interp_path",
             "interp_version",
+            "tests_version",
             "no_parasite",
             "parser",
             "verbose",

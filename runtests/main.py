@@ -153,6 +153,11 @@ filename using the @ character.
             help="The version of the interpreter you're running. (optional, "
             "value will be auto-detected if not provided)")
 
+        interp_grp.add_argument(
+            "--tests_version", action="store", metavar="version", default=None,
+            help="The version of the testsuite you're running. (optional, "
+            "value will be auto-detected if not provided)")
+
         for interpreter in Interpreter.Types():
             interpreter.add_arg_group(argp)
 
@@ -237,7 +242,8 @@ filename using the @ character.
         interpreter = Interpreter.Construct(args.interp, args)
 
         job = Job(args.title, args.note, interpreter,
-                  batch_size=executor.get_batch_size())
+                  batch_size=executor.get_batch_size(),
+                  tests_version=args.tests_version)
 
         # Generate testcases
         logging.info("Finding test cases to run")
@@ -270,7 +276,6 @@ filename using the @ character.
                 dbmanager.insert_testcases(testcases)  # auto-commits
                 logging.info("Done preloading test-cases")
 
-        job.set_tests_version(os.path.dirname(args.filenames[0]))
         job.add_testcases(testcases)
         logging.info("%s tests found, split into %s test batches.",
                     len(testcases), len(job.batches))

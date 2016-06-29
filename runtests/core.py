@@ -285,7 +285,8 @@ class Job(Timer, DBObject):
     _batch_size = 0
     batches = None
 
-    def __init__(self, title, note, interpreter, batch_size=None):
+    def __init__(self, title, note, interpreter, batch_size=None,
+                 tests_version=None):
         self.title = title
         self.note = note
         self.interpreter = interpreter
@@ -294,7 +295,7 @@ class Job(Timer, DBObject):
         self.set_repo_version()
         self.impl_version = interpreter.get_version()
         self.user = pwd.getpwuid(os.geteuid()).pw_name
-        self.tests_version = None
+        self.tests_version = tests_version
 
         self._batch_size = batch_size
 
@@ -308,8 +309,8 @@ class Job(Timer, DBObject):
         else:
             self.repo_version = get_git_version()
 
-    def set_tests_version(self, dir):
-        self.tests_version = get_git_version(dir)
+    def set_tests_version(self, path):
+        self.tests_version = get_git_version(os.path.dirname(path))
 
     def new_batch(self):
         self.batches.append(TestBatch(self))
@@ -317,6 +318,8 @@ class Job(Timer, DBObject):
     def add_testcase(self, testcase):
         if self._batch_size and len(self.batches[-1]) >= self._batch_size:
             self.new_batch()
+        if self.tests_version is None:
+            self.set_tests_version(testcase.get_relpath())
         self.batches[-1].add_testcase(testcase)
 
     def add_testcases(self, testcases):
