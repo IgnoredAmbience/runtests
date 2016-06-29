@@ -6,16 +6,10 @@ import re
 import sys
 import time
 
-if sys.version_info < (3, 3):
-    # Use backported subprocess stdlib for timeout functionality
-    import subprocess32 as subprocess
-else:
-    import subprocess
-
 from .db import DBObject
 from .interpreter import Interpreter
 from .resulthandler import TestResultHandler
-from .util import Timer
+from .util import Timer, get_git_version
 from .parseTestRecord import parseTestRecord
 
 
@@ -300,6 +294,7 @@ class Job(Timer, DBObject):
         self.set_repo_version()
         self.impl_version = interpreter.get_version()
         self.user = pwd.getpwuid(os.geteuid()).pw_name
+        self.tests_version = None
 
         self._batch_size = batch_size
 
@@ -311,11 +306,10 @@ class Job(Timer, DBObject):
         if "CI_BUILD_REF" in os.environ:
             self.repo_version = os.environ["CI_BUILD_REF"]
         else:
-            try:
-                out = subprocess.check_output(["git", "rev-parse", "HEAD"])
-                self.repo_version = out.strip()
-            except:
-                pass
+            self.repo_version = get_git_version()
+
+    def set_tests_version(self, dir):
+        self.tests_version = get_git_version(dir)
 
     def new_batch(self):
         self.batches.append(TestBatch(self))
@@ -338,4 +332,5 @@ class Job(Timer, DBObject):
                 "repo_version": self.repo_version,
                 "username": self.user,
                 "condor_cluster": self.condor_cluster,
-                "condor_scheduler": self.condor_scheduler}
+                "condor_scheduler": self.condor_scheduler,
+                "tests_version": self.tests_version}

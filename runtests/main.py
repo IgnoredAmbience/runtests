@@ -270,6 +270,7 @@ filename using the @ character.
                 dbmanager.insert_testcases(testcases)  # auto-commits
                 logging.info("Done preloading test-cases")
 
+        job.set_tests_version(os.path.dirname(args.filenames[0]))
         job.add_testcases(testcases)
         logging.info("%s tests found, split into %s test batches.",
                     len(testcases), len(job.batches))

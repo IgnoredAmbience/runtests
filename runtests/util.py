@@ -1,5 +1,12 @@
 from datetime import datetime
 import logging
+import sys
+
+if sys.version_info < (3, 3):
+    # Use backported subprocess stdlib for timeout functionality
+    import subprocess32 as subprocess
+else:
+    import subprocess
 
 
 class Timer(object):
@@ -75,3 +82,12 @@ class MaxLevelFilter(logging.Filter):
 
     def filter(self, record):
         return record.levelno >= self.maxlevel
+
+
+def get_git_version(dir=None):
+    hash = ''
+    try:
+        out = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=dir)
+        hash = out.strip()
+    finally:
+        return hash
