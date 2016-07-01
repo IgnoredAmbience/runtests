@@ -16,7 +16,8 @@ done
 
 # Clean-up the rest, as we've given up (timeout failed?)
 if (($count > 40)); then
-  echo "Timed out, removing remaining jobs."
+  echo "Timed out, removing remaining jobs:"
+  condor_status $RUNTESTS_CONDOR_ID
   condor_rm $RUNTESTS_CONDOR_ID
   exit 1
 fi
