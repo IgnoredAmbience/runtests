@@ -213,81 +213,96 @@ filename using the @ character.
         # Configure logging
         log_level = logging.DEBUG if args.verbose > 1 else logging.INFO
 
-        stderr_log = logging.StreamHandler(stream=sys.stderr)
-        stderr_log.setLevel(logging.WARNING)
-        logging.getLogger('').addHandler(stderr_log)
-
         stdout_log = logging.StreamHandler(stream=sys.stdout)
         stdout_log.setLevel(log_level)
-        stderr_log.addFilter(MaxLevelFilter(logging.WARNING))
-        logging.getLogger('').addHandler(stdout_log)
+        stdout_log.addFilter(MaxLevelFilter(logging.WARNING))
+        logging.getLogger().addHandler(stdout_log)
 
-        # What to do if the user hits control-C
-        signal.signal(signal.SIGINT, self.interrupt_handler)
+        stderr_log = logging.StreamHandler(stream=sys.stderr)
+        stderr_log.setLevel(logging.WARNING)
+        logging.getLogger().addHandler(stderr_log)
 
-        self.executor = executor = Executor.Construct(args.executor, args)
+        logging.getLogger().setLevel(log_level)
 
-        dbmanager = DBManager.from_args(args)
-        executor.add_handler(dbmanager)
+        if args.batch and 'RUNTESTS_BATCH_DEBUG' in os.environ:
+            _, _, batch_idx = args.batch.partition(',')
+            if batch_idx == os.environ['RUNTESTS_BATCH_DEBUG']:
+                file_log = logging.FileHandler('../%s.err' % args.batch)
+                file_log.setLevel(logging.DEBUG)
+                logging.getLogger().addHandler(file_log)
 
-        # Output handlers
-        cli = CLIResultPrinter(args.verbose)
-        executor.add_handler(cli)
+        try:
+            raise Exception
+            # What to do if the user hits control-C
+            signal.signal(signal.SIGINT, self.interrupt_handler)
 
-        if args.webreport:
-            webreport_handler = WebResultPrinter(
-                args.templatedir, args.reportdir, args.noindex)
-            executor.add_handler(webreport_handler)
+            self.executor = executor = Executor.Construct(args.executor, args)
 
-        interpreter = Interpreter.Construct(args.interp, args)
+            dbmanager = DBManager.from_args(args)
+            executor.add_handler(dbmanager)
 
-        job = Job(args.title, args.note, interpreter,
-                  batch_size=executor.get_batch_size(),
-                  tests_version=args.tests_version)
+            # Output handlers
+            cli = CLIResultPrinter(args.verbose)
+            executor.add_handler(cli)
 
-        # Generate testcases
-        logging.info("Finding test cases to run")
-        if args.batch:
-            if not dbmanager:
-                raise ValueError("Loading tests from a batch requires a db")
+            if args.webreport:
+                webreport_handler = WebResultPrinter(
+                    args.templatedir, args.reportdir, args.noindex)
+                executor.add_handler(webreport_handler)
 
-            dbmanager.wait_for_batch = True
-            job_id, _, batch_idx = args.batch.partition(',')
-            job_id, batch_idx = int(job_id), int(batch_idx)
+            interpreter = Interpreter.Construct(args.interp, args)
 
-            job._dbid = job_id
-            job._batch_size = 0
+            job = Job(args.title, args.note, interpreter,
+                    batch_size=executor.get_batch_size(),
+                    tests_version=args.tests_version)
 
-            tests = dbmanager.load_batch_tests(job_id, batch_idx)
-            job.batches[0]._dbid = tests[0][2]
-            job.batches[0].condor_proc = batch_idx
-            testcases = []
-            for dbid, path, _ in tests:
-                tc = TestCase(path)
-                tc._dbid = dbid
-                testcases.append(tc)
+            # Generate testcases
+            logging.info("Finding test cases to run")
+            if args.batch:
+                if not dbmanager:
+                    raise ValueError("Loading tests from a batch requires a db")
 
-        else:
-            testcases = self.get_testcases_from_paths(
-                args.filenames, exclude=args.exclude)
+                dbmanager.wait_for_batch = True
+                job_id, _, batch_idx = args.batch.partition(',')
+                job_id, batch_idx = int(job_id), int(batch_idx)
 
-            if dbmanager:
-                logging.info("Preloading test-cases into database...")
-                dbmanager.insert_testcases(testcases)  # auto-commits
-                logging.info("Done preloading test-cases")
+                job._dbid = job_id
+                job._batch_size = 0
 
-        job.add_testcases(testcases)
-        logging.info("%s tests found, split into %s test batches.",
-                    len(testcases), len(job.batches))
+                tests = dbmanager.load_batch_tests(job_id, batch_idx)
+                job.batches[0]._dbid = tests[0][2]
+                job.batches[0].condor_proc = batch_idx
+                testcases = []
+                for dbid, path, _ in tests:
+                    tc = TestCase(path)
+                    tc._dbid = dbid
+                    testcases.append(tc)
 
-        if dbmanager and not args.batch:
-            logging.info("Inserting job into database")
-            dbmanager.create_job_batches_runs(job)
-            logging.info("Done inserting job")
+            else:
+                testcases = self.get_testcases_from_paths(
+                    args.filenames, exclude=args.exclude)
 
-        executor.run_job(job)
+                if dbmanager:
+                    logging.info("Preloading test-cases into database...")
+                    dbmanager.insert_testcases(testcases)  # auto-commits
+                    logging.info("Done preloading test-cases")
 
-        exit(cli.get_exit_code())
+            job.add_testcases(testcases)
+            logging.info("%s tests found, split into %s test batches.",
+                        len(testcases), len(job.batches))
+
+            if dbmanager and not args.batch:
+                logging.info("Inserting job into database")
+                dbmanager.create_job_batches_runs(job)
+                logging.info("Done inserting job")
+
+            executor.run_job(job)
+
+            exit(cli.get_exit_code())
+
+        except Exception as e:
+            logging.exception("Uncaught fatal exception!")
+            exit(2)
 
 if __name__ == "__main__":
     Runtests().main()

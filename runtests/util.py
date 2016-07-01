@@ -74,14 +74,14 @@ class SubclassSelectorMixin(object):
 
 class MaxLevelFilter(logging.Filter):
     """
-    This is a logging filter that ignores log records below a certain level.
+    This is a logging filter that ignores log records above a certain level.
     """
 
     def __init__(self, maxlevel):
         self.maxlevel = maxlevel
 
     def filter(self, record):
-        return record.levelno >= self.maxlevel
+        return record.levelno < self.maxlevel
 
 
 def get_git_version(dir=None):
