@@ -232,7 +232,6 @@ filename using the @ character.
                 logging.getLogger().addHandler(file_log)
 
         try:
-            raise Exception
             # What to do if the user hits control-C
             signal.signal(signal.SIGINT, self.interrupt_handler)
 
