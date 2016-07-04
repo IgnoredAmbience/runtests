@@ -111,8 +111,12 @@ class Interpreter(SubclassSelectorMixin):
             result = Interpreter.TIMEOUT
         testcase.stop_timer()
 
-        #output = output.decode("utf8").encode("ascii", "xmlcharrefreplace")
-        #errors = errors.decode("utf8").encode("ascii", "xmlcharrefreplace")
+        # TODO: Register a logging codecs.register_error() handler to catch bad
+        # character encodings.
+        #output = output.decode("latin-1", "replace").encode("utf8")
+        #errors = errors.decode("latin-1", "replace").encode("utf8")
+        output = output.decode("utf8", "replace")
+        errors = errors.decode("utf8", "replace")
         ret = test_pipe.returncode
         if result is None:
             result = self.determine_result(ret)
