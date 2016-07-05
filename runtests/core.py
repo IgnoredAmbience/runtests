@@ -74,7 +74,10 @@ class TestCase(Timer, DBObject):
         elif interp_result == Interpreter.TIMEOUT:
             self.result = TestCase.TIMEOUT
         elif self.negative:
-            if interp_result == Interpreter.PASS:
+            if "NotEarlyError" in stdout or "NotEarlyError" in stderr:
+                self.result = TestCase.FAIL
+                stderr = stderr + "\n\n[Runtests] Test should have errored with an EarlyError, and not a runtime error."
+            elif interp_result == Interpreter.PASS:
                 self.result = TestCase.FAIL
             else:
                 self.result = TestCase.PASS
