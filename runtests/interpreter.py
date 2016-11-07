@@ -253,7 +253,7 @@ class MLJSRef(Interpreter):
         return "MLJSRef"
 
     def build_args(self, testcase):
-        arglist = [self.path]
+        arglist = ["ocamlrun", self.path]
         arglist.append("-json")
         arglist.append("-test_prelude")
         arglist.append(self.get_filepath("test_prelude.js"))
