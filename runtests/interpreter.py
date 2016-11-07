@@ -76,7 +76,7 @@ class Interpreter(SubclassSelectorMixin):
         pass
 
     def build_args(self, testcase):
-        return [self.path, testcase.get_realpath()]
+        return [self.path, self.get_filepath(testcase.get_realpath())]
 
     """Get path to an input file, copying it to temporary storage to prevent race conditons, if required"""
 
@@ -244,3 +244,19 @@ class JSRef(Interpreter):
 
         grp.add_argument("--no_parasite", action="store_true",
                           help="Run JSRef with -no-parasite flag")
+
+class MLJSRef(Interpreter):
+    trashesinput = True
+    path = "main.byte"
+
+    def get_name(self):
+        return "MLJSRef"
+
+    def build_args(self, testcase):
+        arglist = [self.path]
+        arglist.append("-json")
+        arglist.append("-test_prelude")
+        arglist.append(self.get_filepath("test_prelude.js"))
+        arglist.append("-file")
+        arglist.append(self.get_filepath(testcase.get_realpath()))
+        return arglist
