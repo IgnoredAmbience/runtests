@@ -1,3 +1,2 @@
 psycopg2 >= 2.7, < 2.8
 subprocess32 >= 3.2.7, < 3.3
-virtualenv-clone >= 0.2.6, < 0.3
