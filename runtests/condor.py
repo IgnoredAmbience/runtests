@@ -26,9 +26,7 @@ class Condor(Executor):
 
     # Default class selections, see argument help for details
     # Yes, the defaults are terribly DoC-specific
-    machine_reqs = 'OpSysMajorVer == 14'
-    machine_reqs += '&& Machine != "yam.doc.ic.ac.uk"'
-    machine_reqs += '&& Machine != "wen.doc.ic.ac.uk"'
+    machine_reqs = 'OpSysMajorVer == 16'
 
     sub_exec = 'sequential'
     log_job = False
