@@ -55,7 +55,8 @@ class Interpreter(SubclassSelectorMixin):
     def determine_version(self):
         if self.path:
             try:
-                output = subprocess.check_output([self.path, "--version"])
+                output = subprocess.check_output([self.path, "--version"],
+                            stderr=subprocess.DEVNULL)
                 return output.strip()
             except:
                 return "Unknown version"
