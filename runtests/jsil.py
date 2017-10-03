@@ -4,21 +4,11 @@ import os
 
 class JSIL(Interpreter):
     # Class configuration options
-    trashesinput = True
+    trashesinput = False
 
-    # Execution options
-    stats = False
-    simp = False
-    byte = False
-
-    def __init__(self, stats=False, simp=False, byte=False, **args):
+    def __init__(self, **args):
         Interpreter.__init__(self, **args)
-        self.stats = stats
-        self.simp = simp
-        if byte:
-            self.path = './interpreter_run.byte'
-        else:
-            self.path = './interpreter_run.native'
+        self.path = './jsil.native'
 
     def get_name(self):
         return "JSIL"
@@ -29,28 +19,18 @@ class JSIL(Interpreter):
     def determine_version(self):
         return ""
 
+    def set_path(self, path):
+        self.path = os.path.abspath(path)
+
+    def setup(self):
+        # TODO: Use cwd parameter of Popen instead of chdir-ing??
+        self.current_dir = os.getcwd()
+        os.chdir(os.path.dirname(self.path))
+
     def build_args(self, testcase):
-
-        if self.stats:
-            arglist = ['/usr/bin/time', '-p', self.path, '-stats']
-        else:
-            arglist = [self.path, '-test_prelude', self.get_filepath('test_prelude_es6.js')]
-
-        if self.simp:
-            arglist.append('-simp')
-
-        arglist.append('-file')
+        arglist = [self.path, '-js2jsil', '-js', '-test262', '-file']
         arglist.append(self.get_filepath(testcase.get_realpath()))
-
         return arglist
 
-    @staticmethod
-    def add_arg_group(argp):
-        grp = argp.add_argument_group(title="JSIL Interpreter Options")
-        grp.add_argument("--stats", action="store_true",
-                         help="Don't execute, just collect and report generated"
-                         " program statistics")
-        grp.add_argument("--simp", action="store_true",
-                         help="Enable IL simplification")
-        grp.add_argument("--byte", action="store_true",
-                         help="Use bytecode version")
+    def teardown(self):
+        os.chdir(self.current_dir)
