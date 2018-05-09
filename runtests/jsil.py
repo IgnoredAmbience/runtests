@@ -28,7 +28,7 @@ class JSIL(Interpreter):
         os.chdir(os.path.dirname(self.path))
 
     def build_args(self, testcase):
-        arglist = [self.path, '-js2jsil', '-js', '-test262', '-file']
+        arglist = [self.path, '-test262', '-silent', '-file']
         arglist.append(self.get_filepath(testcase.get_realpath()))
         return arglist
 
